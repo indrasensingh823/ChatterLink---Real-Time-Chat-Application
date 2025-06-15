@@ -8,16 +8,11 @@ import PrivateChatCreate from './pages/PrivateChatCreate.js';
 import PrivateChatRoom from './pages/PrivateChatRoom.js';
 import DailyQuote from './pages/DailyQuote.js'; 
 import './App.css';
-
-
 import TypingRace from './pages/TypingRace.js';
-
-
-
 
 const SOCKET_SERVER_URL = window.location.hostname === "localhost"
   ? "http://localhost:5001"
-  : `http://${window.location.hostname}:5001`;
+  : `https://chatterlink-real-time-chat-application-2.onrender.com`;
 
 // Header component
 const Header = () => (
