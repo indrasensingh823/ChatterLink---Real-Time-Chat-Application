@@ -1,0 +1,31 @@
+.assistant-page {
+  padding: 2rem;
+  text-align: center;
+}
+.chat-box {
+  height: 300px;
+  overflow-y: auto;
+  border: 1px solid #ccc;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background: #1f1e1e72;
+  border-radius: 10px;
+}
+.chat-input {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+.chat-input input {
+  width: 60%;
+  padding: 0.5rem;
+  border-radius: 8px;
+  border: 1px solid #e2e0e0;
+}
+.chat-input button {
+  padding: 0.5rem 1rem;
+  border: none;
+  background: #4caf50;
+  color: white;
+  border-radius: 8px;
+}
