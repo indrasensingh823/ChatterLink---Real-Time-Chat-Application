@@ -145,7 +145,7 @@ const ChatRoom = () => {
 
 
   useEffect(() => {
-    socketRef.current = io(SOCKET_SERVER_URL);
+    socketRef.current = io(SOCKET_SERVER_URL, { transports: ['websocket'] });
 
     socketRef.current.emit("join", { username: name, room: "default" });
 
