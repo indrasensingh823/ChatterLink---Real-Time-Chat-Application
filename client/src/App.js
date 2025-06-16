@@ -20,8 +20,7 @@ const SOCKET_SERVER_URL = "https://chatterlink-real-time-chat-application-2.onre
 // Header component
 const Header = () => (
   <header style={{ backgroundColor: '#282c34', padding: '1rem', color: 'white' }}>
-    {/* <h1 className="app-title">💬 ChatterLink</h1> */}
-    <h1 className="app-title">💬 your link live</h1>
+    <h1 className="app-title">💬 ChatterLink</h1>
   </header>
 );
 
