@@ -6,14 +6,11 @@ ChatterLink is a full-stack real-time chat application built using **React**, **
 
 Here is a preview of the PrecisionSpend Expense Tracker:
 
-###  Dashboard View
-![Dashboard Screenshot](./screenshots/dashboard.png)
+###  Homepage View
+![Image](https://github.com/user-attachments/assets/fca62c6b-46d7-435e-9c92-79c74aeeb4f1)
 
-###  Dark Mode Enabled
-![Dark Mode Screenshot](./screenshots/dark-mode.png)
-
-###  Add Expense Form
-![Add Expense Screenshot](./screenshots/add-expense.png)
+###  Chatroom Page View
+![Image](https://github.com/user-attachments/assets/48999863-ffc1-4fc4-84f4-29b397a2c039)
 
 ---
 
