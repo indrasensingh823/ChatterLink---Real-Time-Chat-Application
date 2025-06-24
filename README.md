@@ -2,7 +2,18 @@
 
 ChatterLink is a full-stack real-time chat application built using **React**, **Node.js**, **Express**, **Socket.IO**, and **MongoDB**. It allows users to join public or private chat rooms, participate in typing races, and engage in live conversations instantly.
 
-![ChatterLink Preview](https://your-screenshot-or-demo-image-url.com)
+## App Screenshot
+
+Here is a preview of the PrecisionSpend Expense Tracker:
+
+###  Dashboard View
+![Dashboard Screenshot](./screenshots/dashboard.png)
+
+###  Dark Mode Enabled
+![Dark Mode Screenshot](./screenshots/dark-mode.png)
+
+###  Add Expense Form
+![Add Expense Screenshot](./screenshots/add-expense.png)
 
 ---
 
@@ -75,6 +86,17 @@ http://localhost:3000
 
 ### License
 This project is licensed under the MIT License.
+
+---
+
+## 📬 Contact
+
+If you have any questions, feedback, or suggestions, feel free to reach out:
+
+- 📧 **Email:** indrasensingh770@gmail.com.com
+- 🐙 **GitHub:** [@indrasensingh823](https://github.com/indrasensingh823)
+- 🔗 **LinkedIn:** [Indrasen Singh](https://www.linkedin.com/in/indrasensingh823)
+
 
 ## ⭐ Show your support!
 If you like this project, give it a ⭐ on GitHub!
