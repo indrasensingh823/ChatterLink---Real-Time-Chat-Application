@@ -1112,12 +1112,13 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Serve React build
+// Serve React frontend
 app.use(express.static(path.join(__dirname, "../client/build")));
 
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../client/build", "index.html"));
 });
+
 
   // ========== DISCONNECT HANDLER ==========
 
