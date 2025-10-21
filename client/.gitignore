@@ -4,6 +4,9 @@
 /node_modules
 /.pnp
 .pnp.js
+# Ignore environment and dependencies
+node_modules/
+.env
 
 # testing
 /coverage
