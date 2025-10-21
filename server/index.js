@@ -1112,6 +1112,13 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Serve React build
+app.use(express.static(path.join(__dirname, "../client/build")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../client/build", "index.html"));
+});
+
   // ========== DISCONNECT HANDLER ==========
 
   socket.on("disconnect", () => {
