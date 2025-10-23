@@ -1120,6 +1120,11 @@ app.get("*", (req, res) => {
 });
 
 
+app.get("/", (req, res) => {
+  res.send("✅ Server is running perfectly on vercel!");
+});
+
+
   // ========== DISCONNECT HANDLER ==========
 
   socket.on("disconnect", () => {
