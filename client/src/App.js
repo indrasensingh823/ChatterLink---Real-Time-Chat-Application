@@ -13,9 +13,28 @@ import MeetingCreate from "./pages/MeetingCreate.js";
 import MeetingRoom from "./pages/MeetingRoom.js";
 import './App.css';
 
-const SOCKET_SERVER_URL = window.location.hostname === "localhost"
-  ? "http://localhost:5001"
-  : `http://${window.location.hostname}:5001`;
+// 🆕 ENHANCED BACKEND INTEGRATION - Both Localhost and Production
+const getBackendUrl = () => {
+  // Use environment variable first, then fallback to dynamic detection
+  if (process.env.REACT_APP_API_BASE_URL) {
+    return process.env.REACT_APP_API_BASE_URL;
+  }
+  
+  // For production (Netlify) - use your actual Vercel backend URL
+  if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+    return "https://chatter-link-real-time-chat-applica.vercel.app";
+  }
+  
+  // For local development
+  return "http://localhost:5001";
+};
+
+const SOCKET_SERVER_URL = getBackendUrl();
+const API_BASE_URL = getBackendUrl();
+
+console.log(`🌐 Frontend Environment: ${process.env.NODE_ENV}`);
+console.log(`🔗 Backend URL: ${SOCKET_SERVER_URL}`);
+console.log(`🔗 API Base URL: ${API_BASE_URL}`);
 
 // Enhanced Header Component
 const Header = () => (
@@ -227,11 +246,54 @@ const ChatRoom = () => {
   const [onlineCount, setOnlineCount] = useState(0);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('connecting');
   const typingTimeoutRef = useRef();
   const fileInputRef = useRef(null);
 
+  // 🆕 Connection status management
   useEffect(() => {
-    socketRef.current = io(SOCKET_SERVER_URL, { transports: ['websocket'] });
+    const checkBackendHealth = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/`);
+        if (response.ok) {
+          setConnectionStatus('connected');
+          console.log('✅ Backend connection successful');
+        } else {
+          setConnectionStatus('error');
+          console.log('❌ Backend connection failed');
+        }
+      } catch (error) {
+        setConnectionStatus('error');
+        console.log('❌ Backend connection error:', error);
+      }
+    };
+
+    checkBackendHealth();
+  }, []);
+
+  useEffect(() => {
+    console.log(`🔗 Connecting to Socket.IO server: ${SOCKET_SERVER_URL}`);
+    
+    socketRef.current = io(SOCKET_SERVER_URL, { 
+      transports: ['websocket', 'polling'],
+      timeout: 10000
+    });
+
+    // 🆕 Connection event handlers
+    socketRef.current.on("connect", () => {
+      console.log('✅ Socket.IO connected successfully');
+      setConnectionStatus('connected');
+    });
+
+    socketRef.current.on("connect_error", (error) => {
+      console.error('❌ Socket.IO connection error:', error);
+      setConnectionStatus('error');
+    });
+
+    socketRef.current.on("disconnect", (reason) => {
+      console.log('🔴 Socket.IO disconnected:', reason);
+      setConnectionStatus('disconnected');
+    });
 
     socketRef.current.emit("join", { username: name, room: "default" });
 
@@ -286,13 +348,14 @@ const ChatRoom = () => {
     }, 2000);
   };
 
+  // 🆕 ENHANCED File Upload with Better Error Handling
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // File size validation (10MB limit)
-    if (file.size > 10 * 1024 * 1024) {
-      alert('File size too large. Please select a file smaller than 10MB.');
+    // File size validation (50MB limit - matches backend)
+    if (file.size > 50 * 1024 * 1024) {
+      alert('File size too large. Please select a file smaller than 50MB.');
       return;
     }
 
@@ -300,34 +363,36 @@ const ChatRoom = () => {
     
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('username', name);
-    formData.append('room', 'default');
 
     try {
-      const response = await fetch(`${SOCKET_SERVER_URL}/upload`, {
+      console.log(`📤 Uploading file to: ${API_BASE_URL}/upload`);
+      
+      const response = await fetch(`${API_BASE_URL}/upload`, {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) {
-        throw new Error('Upload failed');
+        const errorData = await response.json().catch(() => ({ error: 'Upload failed' }));
+        throw new Error(errorData.error || `Upload failed with status: ${response.status}`);
       }
 
       const data = await response.json();
       
+      console.log('✅ File upload successful:', data);
+      
       // Emit file upload event to socket
       socketRef.current.emit('file_upload', {
-        filename: data.filename,
         originalName: file.name,
         fileType: file.type,
         fileSize: file.size,
         fileUrl: data.fileUrl,
-        username: name
+        filename: data.filename
       });
 
     } catch (error) {
-      console.error('Upload error:', error);
-      alert('File upload failed. Please try again.');
+      console.error('❌ Upload error:', error);
+      alert(`File upload failed: ${error.message}`);
     } finally {
       setIsUploading(false);
       // Reset file input
@@ -370,6 +435,17 @@ const ChatRoom = () => {
     });
   };
 
+  // 🆕 Connection status indicator
+  const getConnectionStatusText = () => {
+    switch (connectionStatus) {
+      case 'connected': return '🟢 Connected';
+      case 'connecting': return '🟡 Connecting...';
+      case 'error': return '🔴 Connection Error';
+      case 'disconnected': return '🔴 Disconnected';
+      default: return '⚪ Unknown';
+    }
+  };
+
   return (
     <div className="chatroom-container">
       <div className="chatroom-header">
@@ -378,6 +454,9 @@ const ChatRoom = () => {
           <div className="online-indicator">
             <span className="online-dot"></span>
             {onlineCount} users online
+            <span className="connection-status">
+              {getConnectionStatusText()}
+            </span>
           </div>
         </div>
         <div className="user-welcome">
@@ -485,6 +564,7 @@ const ChatRoom = () => {
                 className="file-upload-button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
+                title={isUploading ? "Uploading..." : "Attach file"}
               >
                 {isUploading ? '📤' : '📎'}
               </button>
@@ -499,8 +579,13 @@ const ChatRoom = () => {
                 }}
                 required
                 className="message-input"
+                disabled={connectionStatus !== 'connected'}
               />
-              <button type="submit" className="send-button">
+              <button 
+                type="submit" 
+                className="send-button"
+                disabled={connectionStatus !== 'connected'}
+              >
                 <span className="send-text">Send</span>
                 <span className="send-icon">➤</span>
               </button>

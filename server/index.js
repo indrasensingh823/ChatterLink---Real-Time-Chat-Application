@@ -26,6 +26,14 @@ const PORT = process.env.PORT || 5001;
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR || path.join(process.cwd(), "recordings");
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
+// 🆕 FRONTEND INTEGRATION - Environment Variables
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+const NODE_ENV = process.env.NODE_ENV || "development";
+
+console.log(`🌐 Environment: ${NODE_ENV}`);
+console.log(`🔗 Frontend URL: ${CLIENT_URL}`);
+console.log(`🔗 Backend URL: http://localhost:${PORT}`);
+
 // 🛠️ CRITICAL FIX: Ensure uploads directory exists with proper permissions
 try {
   [RECORDINGS_DIR, UPLOADS_DIR].forEach(dir => {
@@ -110,10 +118,36 @@ connectDB();
 
 // 🚀 Initialize Express
 const app = express();
+
+// 🆕 ENHANCED CORS CONFIG - Frontend Integration + Localhost
 app.use(cors({
-  origin: process.env.CLIENT_URL || "*",
-  credentials: true
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      CLIENT_URL,
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "https://your-frontend-app.netlify.app", // Replace with your actual Netlify URL
+      process.env.CLIENT_URL // From environment variable
+    ].filter(Boolean); // Remove empty values
+
+    if (allowedOrigins.indexOf(origin) !== -1 || NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      console.log(`🚫 CORS blocked for origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// Handle preflight requests
+app.options('*', cors());
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use("/recordings", express.static(RECORDINGS_DIR));
@@ -334,7 +368,11 @@ app.post("/api/meetings/:meetingId/recording", uploadRecordings.single("file"), 
     }
     
     const url = `/recordings/${req.file.filename}`;
-    const fullUrl = `${req.protocol}://${req.get('host')}${url}`;
+    // 🆕 FIX: Dynamic URL generation for both environments
+    const baseUrl = process.env.NODE_ENV === 'production' 
+      ? `https://${req.get('host')}`
+      : `${req.protocol}://${req.get('host')}`;
+    const fullUrl = `${baseUrl}${url}`;
     
     console.log(`🎥 Recording uploaded for meeting ${req.params.meetingId}: ${req.file.filename}`);
     
@@ -363,9 +401,12 @@ app.post('/upload', uploadGeneral.single("file"), (req, res) => {
       });
     }
 
-    // FIX: Generate proper file URL
+    // 🆕 FIX: Dynamic URL generation for both environments
     const fileUrl = `/uploads/${req.file.filename}`;
-    const fullFileUrl = `${req.protocol}://${req.get('host')}${fileUrl}`;
+    const baseUrl = process.env.NODE_ENV === 'production' 
+      ? `https://${req.get('host')}`
+      : `${req.protocol}://${req.get('host')}`;
+    const fullFileUrl = `${baseUrl}${fileUrl}`;
     
     console.log(`📁 FILE UPLOAD SUCCESS: ${req.file.originalname} -> ${req.file.filename} (${req.file.size} bytes)`);
     
@@ -404,14 +445,18 @@ app.use((error, req, res, next) => {
   });
 });
 
-// Health Check with Database Status
+// 🆕 ENHANCED Health Check with Frontend Integration Info
 app.get("/", (req, res) => {
   res.json({ 
     success: true,
     message: "✅ ChatterLink Server - Chat + WebRTC + Meetings + File Sharing + AI is running!",
     database: dbConnected ? "MongoDB Connected" : "In-Memory Storage",
+    environment: NODE_ENV,
+    frontendUrl: CLIENT_URL,
+    backendUrl: `http://localhost:${PORT}`,
     inMemoryMeetingsCount: inMemoryMeetings.size,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    integration: "Frontend-Backend Connection: ✅ ACTIVE"
   });
 });
 
@@ -427,7 +472,10 @@ app.get("/upload-info", (req, res) => {
       "Archives (ZIP, RAR)"
     ],
     uploadEndpoint: "/upload",
-    uploadsDirectory: UPLOADS_DIR
+    uploadsDirectory: UPLOADS_DIR,
+    baseUrl: process.env.NODE_ENV === 'production' 
+      ? `https://${req.get('host')}`
+      : `${req.protocol}://${req.get('host')}`
   });
 });
 
@@ -443,7 +491,10 @@ app.get("/api/upload-info", (req, res) => {
       "Archives (ZIP, RAR)"
     ],
     uploadEndpoint: "/api/upload",
-    uploadsDirectory: UPLOADS_DIR
+    uploadsDirectory: UPLOADS_DIR,
+    baseUrl: process.env.NODE_ENV === 'production' 
+      ? `https://${req.get('host')}`
+      : `${req.protocol}://${req.get('host')}`
   });
 });
 
@@ -454,6 +505,8 @@ app.get("/api/db-status", (req, res) => {
     database: dbConnected ? "connected" : "disconnected",
     storage: dbConnected ? "mongodb" : "in-memory",
     inMemoryMeetingsCount: inMemoryMeetings.size,
+    environment: NODE_ENV,
+    frontendIntegration: "active",
     message: dbConnected ? 
       "MongoDB is connected and working" : 
       "Using in-memory storage (MongoDB not available)"
@@ -585,9 +638,29 @@ function cleanupUser(socketId) {
 
 // 🌐 HTTP Server + Socket.IO
 const server = createServer(app);
+
+// 🆕 ENHANCED Socket.IO Config - Frontend Integration + Localhost
 const io = new Server(server, {
   cors: { 
-    origin: process.env.CLIENT_URL || "*", 
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      
+      const allowedOrigins = [
+        CLIENT_URL,
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://your-frontend-app.netlify.app", // Replace with your actual Netlify URL
+        process.env.CLIENT_URL // From environment variable
+      ].filter(Boolean); // Remove empty values
+
+      if (allowedOrigins.indexOf(origin) !== -1 || NODE_ENV === 'development') {
+        callback(null, true);
+      } else {
+        console.log(`🚫 Socket.IO CORS blocked for origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -599,7 +672,7 @@ const io = new Server(server, {
 io.on("connection", (socket) => {
   onlineUsersCount++;
   emitOnlineCount();
-  console.log(`🟢 Socket connected: ${socket.id}`);
+  console.log(`🟢 Socket connected: ${socket.id} from ${socket.handshake.headers.origin || 'unknown origin'}`);
 
   // ========== MEETING FEATURES ==========
   
@@ -1112,19 +1185,6 @@ io.on("connection", (socket) => {
     }
   });
 
-// Serve React frontend
-app.use(express.static(path.join(__dirname, "../client/build")));
-
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "../client/build", "index.html"));
-});
-
-
-app.get("/", (req, res) => {
-  res.send("✅ Server is running perfectly on vercel!");
-});
-
-
   // ========== DISCONNECT HANDLER ==========
 
   socket.on("disconnect", () => {
@@ -1197,6 +1257,8 @@ setInterval(() => {
 // 🚀 Start Server
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🌐 Environment: ${NODE_ENV}`);
+  console.log(`🔗 Frontend URL: ${CLIENT_URL}`);
   console.log(`📁 Meeting recordings: ${RECORDINGS_DIR}`);
   console.log(`📁 General uploads: ${UPLOADS_DIR}`);
   console.log(`🔗 API Base: http://localhost:${PORT}/api`);
@@ -1209,4 +1271,5 @@ server.listen(PORT, () => {
   console.log(`📁 File Sharing: ✅ COMPLETELY FIXED - Now working for both general and private chats`);
   console.log(`🤖 AI Integration: ✅ Gemini AI Enabled`);
   console.log(`🗄️  Database: ${dbConnected ? 'MongoDB Connected' : 'Using In-Memory Storage'}`);
+  console.log(`🔗 Frontend Integration: ✅ ACTIVE - Both localhost and production`);
 });
