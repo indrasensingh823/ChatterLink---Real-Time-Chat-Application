@@ -129,7 +129,7 @@ app.use(cors({
       CLIENT_URL,
       "http://localhost:3000",
       "http://127.0.0.1:3000",
-      "https://your-frontend-app.netlify.app", // Replace with your actual Netlify URL
+      "https://chatter-link-real-time-chat-applica-ruddy.vercel.app/", // Replace with your actual Netlify URL
       process.env.CLIENT_URL // From environment variable
     ].filter(Boolean); // Remove empty values
 
@@ -650,7 +650,7 @@ const io = new Server(server, {
         CLIENT_URL,
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://your-frontend-app.netlify.app", // Replace with your actual Netlify URL
+        "https://chatter-link-real-time-chat-applica-ruddy.vercel.app/", // Replace with your actual Netlify URL
         process.env.CLIENT_URL // From environment variable
       ].filter(Boolean); // Remove empty values
 
