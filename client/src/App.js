@@ -14,9 +14,12 @@ import MeetingCreate from "./pages/MeetingCreate.js";
 import MeetingRoom from "./pages/MeetingRoom.js";
 import './App.css';
 
-const SOCKET_SERVER_URL = window.location.hostname === "localhost"
-  ? "http://localhost:5001"
-  : `http://${window.location.hostname}:5001`;
+// const SOCKET_SERVER_URL = window.location.hostname === "localhost"
+//   ? "http://localhost:5001"
+//   : `http://${window.location.hostname}:5001`;
+
+const SOCKET_SERVER_URL =
+  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
 
 // Enhanced Header Component
 const Header = () => (
