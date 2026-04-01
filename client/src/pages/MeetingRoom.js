@@ -1045,7 +1045,7 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      <style jsx>{`
+      <style>{`
         .meeting-page {
           padding: 20px;
           max-width: 1400px;

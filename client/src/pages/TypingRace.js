@@ -167,7 +167,7 @@ function TypingRace() {
                   onChange={e => setUsername(e.target.value)} 
                   placeholder="Enter your racing name" 
                   className="username-input"
-                  onKeyPress={(e) => e.key === 'Enter' && joinRace()}
+                  onKeyDown={(e) => e.key === 'Enter' && joinRace()}
                 />
                 <div className="input-icon">👤</div>
               </div>

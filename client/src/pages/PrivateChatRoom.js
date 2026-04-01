@@ -275,7 +275,7 @@ function PrivateChatRoom() {
                 placeholder="Enter 4-digit passcode"
                 className="passcode-input"
                 maxLength="4"
-                onKeyPress={(e) => e.key === 'Enter' && handleVerify()}
+                onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
               />
               <div className="input-icon">🔑</div>
             </div>
@@ -467,7 +467,7 @@ function PrivateChatRoom() {
                       setMessage(e.target.value);
                       handleTyping();
                     }}
-                    onKeyPress={handleKeyPress}
+                    onKeyDown={handleKeyPress}
                     placeholder="Type your secure message..."
                     className="message-input"
                   />
