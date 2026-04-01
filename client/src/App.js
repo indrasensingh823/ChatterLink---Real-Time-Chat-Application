@@ -1,8 +1,7 @@
-
 // src/App.js
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import About from './components/About.js';
 import AssistantPage from './components/AssistantPage.js';
 import PrivateChatCreate from './pages/PrivateChatCreate.js';
@@ -14,12 +13,20 @@ import MeetingCreate from "./pages/MeetingCreate.js";
 import MeetingRoom from "./pages/MeetingRoom.js";
 import './App.css';
 
-// const SOCKET_SERVER_URL = window.location.hostname === "localhost"
-//   ? "http://localhost:5001"
-//   : `http://${window.location.hostname}:5001`;
+// ✅ Backend URL (Production + Local)
+// const SOCKET_SERVER_URL =
+//   process.env.REACT_APP_SOCKET_SERVER_URL ||
+//   (window.location.hostname === "localhost"
+//     ? "http://localhost:5001"
+//     : "https://chatter-link-real-time-chat-applica-five.vercel.app");
 
+// ✅ Always use deployed backend
 const SOCKET_SERVER_URL =
-  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
+  process.env.REACT_APP_SOCKET_SERVER_URL || "https://chatter-link-real-time-chat-applica-five.vercel.app";
+
+console.log("🌐 SOCKET_SERVER_URL:", SOCKET_SERVER_URL);
+
+console.log("🌐 SOCKET_SERVER_URL:", SOCKET_SERVER_URL);
 
 // Enhanced Header Component
 const Header = () => (
@@ -30,9 +37,9 @@ const Header = () => (
         <h1 className="app-title">ChatterLink</h1>
       </div>
       <nav className="nav-links">
-        <a href="/" className="nav-link">Home</a>
-        <a href="/about" className="nav-link">About</a>
-        <a href="/assistant" className="nav-link">AI Assistant</a>
+        <Link to="/" className="nav-link">Home</Link>
+        <Link to="/about" className="nav-link">About</Link>
+        <Link to="/assistant" className="nav-link">AI Assistant</Link>
       </nav>
     </div>
   </header>
@@ -225,26 +232,40 @@ const ChatRoom = () => {
 
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
-  const socketRef = useRef();
+  const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
   const [typingUser, setTypingUser] = useState('');
   const [onlineCount, setOnlineCount] = useState(0);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
-  const typingTimeoutRef = useRef();
+  const typingTimeoutRef = useRef(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    socketRef.current = io(SOCKET_SERVER_URL, { transports: ['websocket'] });
+    if (!name) return;
 
-    socketRef.current.emit("join", { username: name, room: "default" });
+    // ✅ Connect socket
+    socketRef.current = io(SOCKET_SERVER_URL, {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+    });
+
+    socketRef.current.on("connect", () => {
+      console.log("✅ Socket connected:", socketRef.current.id);
+      socketRef.current.emit("join", { username: name, room: "default" });
+      socketRef.current.emit("request-online-list");
+    });
+
+    socketRef.current.on("connect_error", (err) => {
+      console.error("❌ Socket connection error:", err.message);
+    });
 
     socketRef.current.on("message", (data) => {
-      setMessages(prevMessages => [...prevMessages, data]);
+      setMessages((prevMessages) => [...prevMessages, data]);
     });
 
     socketRef.current.on("file_uploaded", (data) => {
-      setMessages(prevMessages => [...prevMessages, data]);
+      setMessages((prevMessages) => [...prevMessages, data]);
     });
 
     socketRef.current.on("typing", (username) => {
@@ -263,26 +284,27 @@ const ChatRoom = () => {
       setOnlineUsers(usersList);
     });
 
-    socketRef.current.emit("request-online-list");
-
     return () => {
-      socketRef.current.disconnect();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
       clearTimeout(typingTimeoutRef.current);
     };
   }, [name]);
 
   const handleSend = (e) => {
     e.preventDefault();
-    if (message.trim()) {
+    if (message.trim() && socketRef.current) {
       socketRef.current.emit("sendMessage", message);
       setMessage('');
-      // Emit stop typing when message is sent
       socketRef.current.emit("stopTyping");
       clearTimeout(typingTimeoutRef.current);
     }
   };
 
   const handleTyping = () => {
+    if (!socketRef.current) return;
+
     socketRef.current.emit("typing", name);
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
@@ -319,22 +341,22 @@ const ChatRoom = () => {
 
       const data = await response.json();
       
-      // Emit file upload event to socket
-      socketRef.current.emit('file_upload', {
-        filename: data.filename,
-        originalName: file.name,
-        fileType: file.type,
-        fileSize: file.size,
-        fileUrl: data.fileUrl,
-        username: name
-      });
+      if (socketRef.current) {
+        socketRef.current.emit('file_upload', {
+          filename: data.filename,
+          originalName: file.name,
+          fileType: file.type,
+          fileSize: file.size,
+          fileUrl: data.fileUrl,
+          username: name
+        });
+      }
 
     } catch (error) {
-      console.error('Upload error:', error);
+      console.error('❌ Upload error:', error);
       alert('File upload failed. Please try again.');
     } finally {
       setIsUploading(false);
-      // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -394,10 +416,10 @@ const ChatRoom = () => {
         <div className="online-users-sidebar">
           <h3>Online Users ({onlineUsers.length})</h3>
           <div className="users-list">
-            {onlineUsers.map(user => (
-              <div key={user.id} className="user-item">
+            {onlineUsers.map((user, index) => (
+              <div key={user.id || index} className="user-item">
                 <div className="user-avatar">
-                  {user.name.charAt(0).toUpperCase()}
+                  {user.name?.charAt(0).toUpperCase()}
                 </div>
                 <span className="user-name">{user.name}</span>
                 <div className="user-status"></div>
