@@ -1,63 +1,71 @@
 // src/pages/MeetingRoom.js
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import io from "socket.io-client";
 
-const SOCKET_URL = process.env.NODE_ENV === 'production' 
-  ? window.location.origin 
-  : "http://localhost:5001";
+const SOCKET_URL =
+  process.env.NODE_ENV === "production"
+    ? window.location.origin
+    : "http://localhost:5001";
 
 export default function MeetingRoom() {
   const { id: meetingId } = useParams();
   const navigate = useNavigate();
+
   const [meeting, setMeeting] = useState(null);
   const [canJoin, setCanJoin] = useState(false);
   const [joined, setJoined] = useState(false);
-  const [userName, setUserName] = useState("");
+  const [userName, setUserName] = useState(localStorage.getItem("userName") || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  
-  // Video and media states
-  const localVideoRef = useRef();
-  const screenVideoRef = useRef();
-  const peersRef = useRef({});
-  const socketRef = useRef();
-  const localStreamRef = useRef(null);
-  const screenStreamRef = useRef(null);
-  
-  // Chat and UI states
+
   const [chat, setChat] = useState([]);
   const [message, setMessage] = useState("");
   const [participants, setParticipants] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [mediaState, setMediaState] = useState({ audio: true, video: true });
-  
-  // Enhanced features states
+
   const [pinnedUser, setPinnedUser] = useState(null);
   const [maximizedVideo, setMaximizedVideo] = useState(null);
   const [showParticipantsList, setShowParticipantsList] = useState(true);
-  
-  // Refs
+
+  const localVideoRef = useRef(null);
+  const screenVideoRef = useRef(null);
+  const peersRef = useRef({});
+  const socketRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const screenStreamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const remoteVideosRef = useRef({});
+  const hasJoinedRef = useRef(false);
 
-  // Fetch meeting metadata
+  const safeSetParticipants = useCallback((updater) => {
+    setParticipants((prev) => {
+      const updated = typeof updater === "function" ? updater(prev) : updater;
+      const uniqueMap = new Map();
+      updated.forEach((p) => {
+        if (p?.id) uniqueMap.set(p.id, p);
+      });
+      return Array.from(uniqueMap.values());
+    });
+  }, []);
+
   useEffect(() => {
     const fetchMeeting = async () => {
       try {
         setLoading(true);
         const response = await fetch(`${SOCKET_URL}/api/meetings/${meetingId}`);
         const data = await response.json();
-        
+
         if (data.success) {
           setMeeting(data.meeting);
           const startAt = new Date(data.meeting.startAt);
           const now = new Date();
           setCanJoin(now >= startAt);
         } else {
-          setError("Meeting not found: " + data.message);
+          setError("Meeting not found: " + (data.message || "Unknown error"));
         }
       } catch (err) {
         setError("Error loading meeting: " + err.message);
@@ -69,12 +77,270 @@ export default function MeetingRoom() {
     fetchMeeting();
   }, [meetingId]);
 
-  // Cleanup on unmount
+  const removePeer = useCallback((socketId) => {
+    const peer = peersRef.current[socketId];
+    if (!peer) return;
+
+    try {
+      peer.pc?.close();
+    } catch (error) {
+      console.warn("Error closing peer connection:", error);
+    }
+
+    delete peersRef.current[socketId];
+    delete remoteVideosRef.current[socketId];
+  }, []);
+
+  const leaveMeeting = useCallback(() => {
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+    } catch (e) {
+      console.warn("Recorder stop error:", e);
+    }
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((track) => track.stop());
+      screenStreamRef.current = null;
+    }
+
+    Object.keys(peersRef.current).forEach(removePeer);
+
+    if (socketRef.current) {
+      try {
+        socketRef.current.emit("leave-meeting", { meetingId });
+        socketRef.current.removeAllListeners();
+        socketRef.current.disconnect();
+      } catch (e) {
+        console.warn("Socket cleanup error:", e);
+      }
+      socketRef.current = null;
+    }
+
+    setJoined(false);
+    setIsScreenSharing(false);
+    setPinnedUser(null);
+    setMaximizedVideo(null);
+    setParticipants([]);
+    hasJoinedRef.current = false;
+  }, [meetingId, removePeer]);
+
   useEffect(() => {
     return () => {
       leaveMeeting();
     };
-  }, []);
+  }, [leaveMeeting]);
+
+  const createPeerConnection = useCallback(
+    async (socketId, isOfferer = false) => {
+      if (peersRef.current[socketId]?.pc) {
+        return peersRef.current[socketId];
+      }
+
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      });
+
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => {
+          pc.addTrack(track, localStreamRef.current);
+        });
+      }
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate && socketRef.current) {
+          socketRef.current.emit("webrtc-ice", {
+            to: socketId,
+            candidate: e.candidate,
+          });
+        }
+      };
+
+      pc.ontrack = (e) => {
+        const stream = e.streams[0];
+        if (!peersRef.current[socketId]) {
+          peersRef.current[socketId] = { pc, remoteStream: stream };
+        } else {
+          peersRef.current[socketId].remoteStream = stream;
+        }
+
+        safeSetParticipants((prev) => [...prev]);
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log(`Connection state with ${socketId}:`, pc.connectionState);
+        if (["failed", "closed", "disconnected"].includes(pc.connectionState)) {
+          removePeer(socketId);
+          safeSetParticipants((prev) => prev.filter((p) => p.id !== socketId));
+        }
+      };
+
+      peersRef.current[socketId] = { pc };
+
+      if (isOfferer) {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          if (socketRef.current) {
+            socketRef.current.emit("webrtc-offer", {
+              to: socketId,
+              sdp: pc.localDescription,
+            });
+          }
+        } catch (error) {
+          console.error("Offer creation error:", error);
+        }
+      }
+
+      return peersRef.current[socketId];
+    },
+    [removePeer, safeSetParticipants]
+  );
+
+  const setupSocketHandlers = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+
+    socket.on("connect", () => {
+      console.log("Connected to meeting server");
+
+      if (!hasJoinedRef.current) {
+        socket.emit("join-meeting", {
+          meetingId,
+          user: { name: userName.trim() },
+        });
+        hasJoinedRef.current = true;
+      }
+
+      setJoined(true);
+      setLoading(false);
+      localStorage.setItem("userName", userName.trim());
+    });
+
+    socket.on("participants", async (participantsList) => {
+      const filtered = (participantsList || []).filter((p) => p?.id !== socket.id);
+      safeSetParticipants(filtered);
+
+      for (const participant of filtered) {
+        await createPeerConnection(participant.id, true);
+      }
+    });
+
+    socket.on("peer-joined", async ({ id, user }) => {
+      if (!id || id === socket.id) return;
+
+      safeSetParticipants((prev) => {
+        const exists = prev.some((p) => p.id === id);
+        if (exists) return prev;
+        return [...prev, { id, user }];
+      });
+
+      await createPeerConnection(id, true);
+    });
+
+    socket.on("peer-left", ({ id }) => {
+      safeSetParticipants((prev) => prev.filter((p) => p.id !== id));
+
+      if (pinnedUser === id) setPinnedUser(null);
+      if (maximizedVideo === id) setMaximizedVideo(null);
+
+      removePeer(id);
+    });
+
+    socket.on("webrtc-offer", async ({ from, sdp }) => {
+      const peer = await createPeerConnection(from, false);
+      const pc = peer?.pc;
+
+      if (pc) {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          socket.emit("webrtc-answer", {
+            to: from,
+            sdp: pc.localDescription,
+          });
+        } catch (error) {
+          console.error("Error handling offer:", error);
+        }
+      }
+    });
+
+    socket.on("webrtc-answer", async ({ from, sdp }) => {
+      const pc = peersRef.current[from]?.pc;
+      if (pc) {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        } catch (error) {
+          console.error("Error handling answer:", error);
+        }
+      }
+    });
+
+    socket.on("webrtc-ice", async ({ from, candidate }) => {
+      const pc = peersRef.current[from]?.pc;
+      if (pc && candidate) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+          console.warn("addIceCandidate failed:", e);
+        }
+      }
+    });
+
+    socket.on("chat-message", ({ user, message: msg, time }) => {
+      setChat((prev) => [
+        ...prev,
+        {
+          user,
+          message: msg,
+          time,
+          id: `${Date.now()}-${Math.random()}`,
+        },
+      ]);
+    });
+
+    socket.on("recording-available", ({ url }) => {
+      setChat((prev) => [
+        ...prev,
+        {
+          user: { name: "System" },
+          message: `Recording available: ${url}`,
+          time: new Date().toISOString(),
+          id: `${Date.now()}-${Math.random()}`,
+        },
+      ]);
+    });
+
+    socket.on("connect_error", (socketError) => {
+      console.error("Socket connection error:", socketError);
+      setError("Failed to connect to meeting server");
+      setLoading(false);
+    });
+
+    socket.on("disconnect", (reason) => {
+      console.warn("Socket disconnected:", reason);
+    });
+  }, [
+    meetingId,
+    userName,
+    pinnedUser,
+    maximizedVideo,
+    createPeerConnection,
+    removePeer,
+    safeSetParticipants,
+  ]);
 
   const joinMeeting = async () => {
     if (!userName.trim()) {
@@ -94,24 +360,22 @@ export default function MeetingRoom() {
     setError("");
 
     try {
-      // Get user media
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true, 
-        video: true 
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
       });
+
       localStreamRef.current = stream;
-      
+
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
       }
 
-      // Initialize socket connection
-      socketRef.current = io(SOCKET_URL, { 
-        transports: ["websocket", "polling"] 
+      socketRef.current = io(SOCKET_URL, {
+        transports: ["websocket", "polling"],
       });
 
       setupSocketHandlers();
-      
     } catch (err) {
       console.error("Media access error:", err);
       setError("Camera/microphone permission required: " + err.message);
@@ -119,292 +383,113 @@ export default function MeetingRoom() {
     }
   };
 
-  const setupSocketHandlers = () => {
-    const socket = socketRef.current;
-
-    socket.on("connect", () => {
-      console.log("Connected to meeting server");
-      socket.emit("join-meeting", { 
-        meetingId, 
-        user: { name: userName.trim() } 
-      });
-      setJoined(true);
-      setLoading(false);
-    });
-
-    socket.on("participants", (participantsList) => {
-      setParticipants(participantsList);
-      participantsList.forEach(participant => {
-        createPeerConnection(participant.id, true);
-      });
-    });
-
-    socket.on("peer-joined", ({ id, user }) => {
-      setParticipants(prev => [...prev, { id, user }]);
-      createPeerConnection(id, true);
-    });
-
-    socket.on("peer-left", ({ id }) => {
-      setParticipants(prev => prev.filter(p => p.id !== id));
-      // Reset pinned/maximized if that user left
-      if (pinnedUser === id) setPinnedUser(null);
-      if (maximizedVideo === id) setMaximizedVideo(null);
-      removePeer(id);
-    });
-
-    // WebRTC signaling handlers
-    socket.on("webrtc-offer", async ({ from, sdp, user }) => {
-      await createPeerConnection(from, false);
-      const pc = peersRef.current[from]?.pc;
-      if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("webrtc-answer", { to: from, sdp: pc.localDescription });
-      }
-    });
-
-    socket.on("webrtc-answer", async ({ from, sdp }) => {
-      const pc = peersRef.current[from]?.pc;
-      if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-      }
-    });
-
-    socket.on("webrtc-ice", async ({ from, candidate }) => {
-      const pc = peersRef.current[from]?.pc;
-      if (pc) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (e) {
-          console.warn("addIceCandidate failed:", e);
-        }
-      }
-    });
-
-    // Chat handlers
-    socket.on("chat-message", ({ user, message: msg, time }) => {
-      setChat(prev => [...prev, { user, message: msg, time, id: Date.now() + Math.random() }]);
-    });
-
-    socket.on("recording-available", ({ url }) => {
-      setChat(prev => [...prev, { 
-        user: { name: "System" }, 
-        message: `Recording available: ${url}`, 
-        time: new Date().toISOString(),
-        id: Date.now() + Math.random()
-      }]);
-    });
-
-    socket.on("connect_error", (error) => {
-      console.error("Socket connection error:", error);
-      setError("Failed to connect to meeting server");
-      setLoading(false);
-    });
-  };
-
-  const createPeerConnection = (socketId, isOfferer) => {
-    if (peersRef.current[socketId]) return peersRef.current[socketId];
-
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
-      ]
-    });
-
-    // Add local tracks
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => {
-        pc.addTrack(track, localStreamRef.current);
-      });
-    }
-
-    pc.onicecandidate = (e) => {
-      if (e.candidate && socketRef.current) {
-        socketRef.current.emit("webrtc-ice", { 
-          to: socketId, 
-          candidate: e.candidate 
-        });
-      }
-    };
-
-    pc.ontrack = (e) => {
-      const stream = e.streams[0];
-      
-      // Store the remote stream
-      if (!peersRef.current[socketId]) {
-        peersRef.current[socketId] = { pc };
-      }
-      peersRef.current[socketId].remoteStream = stream;
-      
-      // Force re-render to update video displays
-      setParticipants(prev => [...prev]);
-    };
-
-    pc.onconnectionstatechange = () => {
-      console.log(`Connection state with ${socketId}:`, pc.connectionState);
-      if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-        removePeer(socketId);
-      }
-    };
-
-    peersRef.current[socketId] = { pc };
-
-    if (isOfferer) {
-      pc.createOffer()
-        .then(offer => pc.setLocalDescription(offer))
-        .then(() => {
-          if (socketRef.current) {
-            socketRef.current.emit("webrtc-offer", { 
-              to: socketId, 
-              sdp: pc.localDescription 
-            });
-          }
-        })
-        .catch(console.error);
-    }
-
-    return peersRef.current[socketId];
-  };
-
-  const removePeer = (socketId) => {
-    const peer = peersRef.current[socketId];
-    if (!peer) return;
-
-    try {
-      peer.pc.close();
-    } catch (error) {
-      console.warn("Error closing peer connection:", error);
-    }
-
-    delete peersRef.current[socketId];
-    delete remoteVideosRef.current[socketId];
-  };
-
-  const leaveMeeting = () => {
-    // Stop all media tracks
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-
-    if (screenStreamRef.current) {
-      screenStreamRef.current.getTracks().forEach(track => track.stop());
-      screenStreamRef.current = null;
-    }
-
-    // Stop recording if active
-    if (isRecording) {
-      mediaRecorderRef.current?.stop();
-      setIsRecording(false);
-    }
-
-    // Close all peer connections
-    Object.keys(peersRef.current).forEach(removePeer);
-
-    // Disconnect socket
-    if (socketRef.current) {
-      socketRef.current.emit("leave-meeting", { meetingId });
-      socketRef.current.disconnect();
-    }
-
-    setJoined(false);
-    setIsScreenSharing(false);
-    setPinnedUser(null);
-    setMaximizedVideo(null);
-  };
-
   const sendChatMessage = () => {
     if (!message.trim() || !socketRef.current) return;
 
-    socketRef.current.emit("chat-message", { 
-      meetingId, 
-      message: message.trim(), 
-      user: { name: userName } 
+    socketRef.current.emit("chat-message", {
+      meetingId,
+      message: message.trim(),
+      user: { name: userName.trim() },
     });
 
     setMessage("");
   };
 
+  const replaceVideoTrackForPeers = async (newVideoTrack) => {
+    const peerEntries = Object.values(peersRef.current);
+    for (const peer of peerEntries) {
+      const sender = peer.pc
+        ?.getSenders()
+        .find((s) => s.track?.kind === "video");
+      if (sender && newVideoTrack) {
+        await sender.replaceTrack(newVideoTrack);
+      }
+    }
+  };
+
   const toggleScreenShare = async () => {
     try {
       if (isScreenSharing) {
-        // Stop screen share
         if (screenStreamRef.current) {
-          screenStreamRef.current.getTracks().forEach(track => track.stop());
+          screenStreamRef.current.getTracks().forEach((track) => track.stop());
           screenStreamRef.current = null;
         }
 
-        // Switch back to camera
-        const cameraStream = await navigator.mediaDevices.getUserMedia({ 
-          video: true, 
-          audio: true 
-        });
-        
-        // Replace video track in all peer connections
-        const videoTrack = cameraStream.getVideoTracks()[0];
-        Object.values(peersRef.current).forEach(({ pc }) => {
-          const sender = pc.getSenders().find(s => s.track?.kind === "video");
-          if (sender) {
-            sender.replaceTrack(videoTrack);
-          }
+        const cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
         });
 
-        // Update local stream and video
+        const newVideoTrack = cameraStream.getVideoTracks()[0];
+        await replaceVideoTrackForPeers(newVideoTrack);
+
         if (localStreamRef.current) {
-          localStreamRef.current.getTracks().forEach(track => track.stop());
+          localStreamRef.current.getTracks().forEach((track) => track.stop());
         }
+
         localStreamRef.current = cameraStream;
+
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = cameraStream;
         }
 
         setIsScreenSharing(false);
-        if (maximizedVideo === 'screen') setMaximizedVideo(null);
+        if (maximizedVideo === "screen") setMaximizedVideo(null);
       } else {
-        // Start screen share
-        const displayStream = await navigator.mediaDevices.getDisplayMedia({ 
-          video: true 
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: false,
         });
 
-        // Create a separate video element for screen share
         if (screenVideoRef.current) {
           screenVideoRef.current.srcObject = displayStream;
         }
 
-        // Replace video track in all peer connections
-        const videoTrack = displayStream.getVideoTracks()[0];
-        Object.values(peersRef.current).forEach(({ pc }) => {
-          const sender = pc.getSenders().find(s => s.track?.kind === "video");
-          if (sender) {
-            sender.replaceTrack(videoTrack);
-          }
-        });
+        const screenTrack = displayStream.getVideoTracks()[0];
+        await replaceVideoTrackForPeers(screenTrack);
 
         screenStreamRef.current = displayStream;
         setIsScreenSharing(true);
-        
-        // Auto-maximize screen share
-        setMaximizedVideo('screen');
+        setMaximizedVideo("screen");
         setPinnedUser(null);
 
-        // Handle when user stops screen share
-        videoTrack.onended = () => {
-          toggleScreenShare();
+        screenTrack.onended = async () => {
+          if (isScreenSharing || screenStreamRef.current) {
+            try {
+              if (screenStreamRef.current) {
+                screenStreamRef.current.getTracks().forEach((track) => track.stop());
+                screenStreamRef.current = null;
+              }
+
+              const cameraStream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true,
+              });
+
+              const fallbackTrack = cameraStream.getVideoTracks()[0];
+              await replaceVideoTrackForPeers(fallbackTrack);
+
+              if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach((track) => track.stop());
+              }
+
+              localStreamRef.current = cameraStream;
+
+              if (localVideoRef.current) {
+                localVideoRef.current.srcObject = cameraStream;
+              }
+
+              setIsScreenSharing(false);
+              if (maximizedVideo === "screen") setMaximizedVideo(null);
+            } catch (e) {
+              console.error("Error restoring camera after screen share:", e);
+            }
+          }
         };
       }
     } catch (err) {
       console.error("Screen share error:", err);
       setError("Screen share failed: " + err.message);
-    }
-  };
-
-  const toggleRecording = () => {
-    if (!isRecording) {
-      startRecording();
-    } else {
-      stopRecording();
     }
   };
 
@@ -416,8 +501,9 @@ export default function MeetingRoom() {
 
     try {
       recordedChunksRef.current = [];
+
       const recorder = new MediaRecorder(localStreamRef.current, {
-        mimeType: 'video/webm;codecs=vp9,opus'
+        mimeType: "video/webm;codecs=vp9,opus",
       });
 
       mediaRecorderRef.current = recorder;
@@ -429,23 +515,25 @@ export default function MeetingRoom() {
       };
 
       recorder.onstop = async () => {
-        const blob = new Blob(recordedChunksRef.current, { 
-          type: "video/webm" 
+        const blob = new Blob(recordedChunksRef.current, {
+          type: "video/webm",
         });
-        
+
         await uploadRecording(blob);
       };
 
-      recorder.start(1000); // Collect data every second
+      recorder.start(1000);
       setIsRecording(true);
-      
-      setChat(prev => [...prev, {
-        user: { name: "System" },
-        message: "Recording started...",
-        time: new Date().toISOString(),
-        id: Date.now()
-      }]);
 
+      setChat((prev) => [
+        ...prev,
+        {
+          user: { name: "System" },
+          message: "Recording started...",
+          time: new Date().toISOString(),
+          id: Date.now(),
+        },
+      ]);
     } catch (err) {
       console.error("Recording error:", err);
       setError("Recording failed: " + err.message);
@@ -456,13 +544,24 @@ export default function MeetingRoom() {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      
-      setChat(prev => [...prev, {
-        user: { name: "System" },
-        message: "Recording stopped, uploading...",
-        time: new Date().toISOString(),
-        id: Date.now()
-      }]);
+
+      setChat((prev) => [
+        ...prev,
+        {
+          user: { name: "System" },
+          message: "Recording stopped, uploading...",
+          time: new Date().toISOString(),
+          id: Date.now(),
+        },
+      ]);
+    }
+  };
+
+  const toggleRecording = () => {
+    if (!isRecording) {
+      startRecording();
+    } else {
+      stopRecording();
     }
   };
 
@@ -473,25 +572,28 @@ export default function MeetingRoom() {
 
       const response = await fetch(`${SOCKET_URL}/api/meetings/${meetingId}/recording`, {
         method: "POST",
-        body: formData
+        body: formData,
       });
 
       const data = await response.json();
 
       if (data.success) {
         if (socketRef.current) {
-          socketRef.current.emit("recording-available", { 
-            meetingId, 
-            url: data.url 
+          socketRef.current.emit("recording-available", {
+            meetingId,
+            url: data.url,
           });
         }
-        
-        setChat(prev => [...prev, {
-          user: { name: "System" },
-          message: `Recording uploaded: ${data.url}`,
-          time: new Date().toISOString(),
-          id: Date.now()
-        }]);
+
+        setChat((prev) => [
+          ...prev,
+          {
+            user: { name: "System" },
+            message: `Recording uploaded: ${data.url}`,
+            time: new Date().toISOString(),
+            id: Date.now(),
+          },
+        ]);
       } else {
         throw new Error(data.message || "Upload failed");
       }
@@ -507,9 +609,7 @@ export default function MeetingRoom() {
     const newState = { ...mediaState, [type]: !mediaState[type] };
     setMediaState(newState);
 
-    const track = localStreamRef.current
-      .getTracks()
-      .find(t => t.kind === type);
+    const track = localStreamRef.current.getTracks().find((t) => t.kind === type);
 
     if (track) {
       track.enabled = newState[type];
@@ -517,12 +617,11 @@ export default function MeetingRoom() {
   };
 
   const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && joined) {
+    if (e.key === "Enter" && joined) {
       sendChatMessage();
     }
   };
 
-  // Enhanced features functions
   const handlePinUser = (userId) => {
     if (pinnedUser === userId) {
       setPinnedUser(null);
@@ -542,28 +641,26 @@ export default function MeetingRoom() {
   };
 
   const getParticipantName = (participantId) => {
-    if (participantId === 'local') return `${userName} (You)`;
-    if (participantId === 'screen') return `${userName}'s Screen`;
-    const participant = participants.find(p => p.id === participantId);
-    return participant?.user?.name || `User ${participantId?.slice(-4) || 'Unknown'}`;
+    if (participantId === "local") return `${userName} (You)`;
+    if (participantId === "screen") return `${userName}'s Screen`;
+    const participant = participants.find((p) => p.id === participantId);
+    return participant?.user?.name || `User ${participantId?.slice(-4) || "Unknown"}`;
   };
 
   const getVideoStream = (videoType) => {
-    if (videoType === 'local') return localStreamRef.current;
-    if (videoType === 'screen') return screenStreamRef.current;
-    return peersRef.current[videoType]?.remoteStream;
+    if (videoType === "local") return localStreamRef.current;
+    if (videoType === "screen") return screenStreamRef.current;
+    return peersRef.current[videoType]?.remoteStream || null;
   };
 
-  // Render video element for different types
   const renderVideoElement = (videoType, className, autoPlay = true, muted = false) => {
     const stream = getVideoStream(videoType);
-    
     if (!stream) return null;
 
     return (
       <video
-        ref={el => {
-          if (el && stream) {
+        ref={(el) => {
+          if (el && stream && el.srcObject !== stream) {
             el.srcObject = stream;
           }
         }}
@@ -607,7 +704,9 @@ export default function MeetingRoom() {
       {error && (
         <div className="error-message">
           {error}
-          <button onClick={() => setError("")} className="close-error">×</button>
+          <button onClick={() => setError("")} className="close-error">
+            ×
+          </button>
         </div>
       )}
 
@@ -626,19 +725,16 @@ export default function MeetingRoom() {
                 disabled={loading}
               />
             </div>
-            
+
             <div className="join-actions">
-              <button 
+              <button
                 onClick={joinMeeting}
                 disabled={loading || !userName.trim()}
                 className="join-button"
               >
                 {loading ? "Joining..." : "Join Meeting"}
               </button>
-              <button 
-                onClick={() => navigate(-1)}
-                className="back-button"
-              >
+              <button onClick={() => navigate(-1)} className="back-button">
                 Go Back
               </button>
             </div>
@@ -652,46 +748,47 @@ export default function MeetingRoom() {
         </div>
       ) : (
         <div className="meeting-room">
-          {/* Main Video Area */}
           <div className="video-main-area">
-            {/* Maximized Video View */}
             {maximizedVideo && (
               <div className="maximized-video-container">
                 <div className="maximized-header">
                   <span className="maximized-title">
-                    {getParticipantName(maximizedVideo)} 
-                    {maximizedVideo === 'screen' && ' - Screen Share'}
+                    {getParticipantName(maximizedVideo)}
+                    {maximizedVideo === "screen" && " - Screen Share"}
                   </span>
-                  <button 
+                  <button
                     onClick={() => setMaximizedVideo(null)}
                     className="minimize-btn"
                   >
                     ✕ Minimize
                   </button>
                 </div>
-                {renderVideoElement(maximizedVideo, "maximized-video", true, maximizedVideo === 'local' || maximizedVideo === 'screen')}
+                {renderVideoElement(
+                  maximizedVideo,
+                  "maximized-video",
+                  true,
+                  maximizedVideo === "local" || maximizedVideo === "screen"
+                )}
               </div>
             )}
 
-            {/* Pinned User View */}
             {!maximizedVideo && pinnedUser && (
               <div className="pinned-video-container">
                 <div className="pinned-header">
-                  <span className="pinned-title">
-                    📌 {getParticipantName(pinnedUser)}
-                  </span>
-                  <button 
-                    onClick={() => setPinnedUser(null)}
-                    className="unpin-btn"
-                  >
+                  <span className="pinned-title">📌 {getParticipantName(pinnedUser)}</span>
+                  <button onClick={() => setPinnedUser(null)} className="unpin-btn">
                     ✕ Unpin
                   </button>
                 </div>
-                {renderVideoElement(pinnedUser, "pinned-video", true, pinnedUser === 'local' || pinnedUser === 'screen')}
+                {renderVideoElement(
+                  pinnedUser,
+                  "pinned-video",
+                  true,
+                  pinnedUser === "local" || pinnedUser === "screen"
+                )}
               </div>
             )}
 
-            {/* Default Local Video when nothing pinned/maximized */}
             {!maximizedVideo && !pinnedUser && (
               <div className="default-local-video">
                 <div className="video-header">
@@ -702,58 +799,71 @@ export default function MeetingRoom() {
                     {isScreenSharing && <span className="sharing-indicator">🖥️ Sharing</span>}
                   </div>
                 </div>
-                {renderVideoElement('local', "local-video-main", true, true)}
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="local-video-main"
+                  onLoadedMetadata={(e) => e.target.play().catch(console.error)}
+                />
               </div>
             )}
           </div>
 
-          {/* Video Grid and Sidebar */}
           <div className="meeting-content">
-            {/* Video Grid */}
             <div className="video-grid-section">
               <div className="section-header">
                 <h4>Participants</h4>
-                <button 
+                <button
                   onClick={() => setShowParticipantsList(!showParticipantsList)}
                   className="toggle-list-btn"
                 >
-                  {showParticipantsList ? '👁️' : '👁️'}
+                  {showParticipantsList ? "👁️" : "👁️"}
                 </button>
               </div>
-              
+
               <div className="video-grid">
-                {/* Local Video in Grid */}
-                <div className={`video-grid-item ${pinnedUser === 'local' ? 'pinned' : ''} ${maximizedVideo === 'local' ? 'maximized' : ''}`}>
+                <div
+                  className={`video-grid-item ${pinnedUser === "local" ? "pinned" : ""} ${
+                    maximizedVideo === "local" ? "maximized" : ""
+                  }`}
+                >
                   <div className="video-overlay">
                     <span className="video-name">You ({userName})</span>
                     <div className="video-actions">
-                      <button 
-                        onClick={() => handleMaximizeVideo('local')}
+                      <button
+                        onClick={() => handleMaximizeVideo("local")}
                         className="video-action-btn maximize"
                         title="Maximize"
                       >
                         ⛶
                       </button>
-                      <button 
-                        onClick={() => handlePinUser('local')}
-                        className={`video-action-btn pin ${pinnedUser === 'local' ? 'active' : ''}`}
-                        title={pinnedUser === 'local' ? 'Unpin' : 'Pin'}
+                      <button
+                        onClick={() => handlePinUser("local")}
+                        className={`video-action-btn pin ${
+                          pinnedUser === "local" ? "active" : ""
+                        }`}
+                        title={pinnedUser === "local" ? "Unpin" : "Pin"}
                       >
-                        {pinnedUser === 'local' ? '📌' : '📌'}
+                        📌
                       </button>
                     </div>
                   </div>
-                  {renderVideoElement('local', "grid-video", true, true)}
+                  {renderVideoElement("local", "grid-video", true, true)}
                 </div>
 
-                {/* Screen Share in Grid */}
                 {isScreenSharing && (
-                  <div className={`video-grid-item screen-share ${maximizedVideo === 'screen' ? 'maximized' : ''}`}>
+                  <div
+                    className={`video-grid-item screen-share ${
+                      maximizedVideo === "screen" ? "maximized" : ""
+                    }`}
+                  >
                     <div className="video-overlay">
                       <span className="video-name">Your Screen</span>
                       <div className="video-actions">
-                        <button 
-                          onClick={() => handleMaximizeVideo('screen')}
+                        <button
+                          onClick={() => handleMaximizeVideo("screen")}
                           className="video-action-btn maximize"
                           title="Maximize Screen"
                         >
@@ -761,32 +871,44 @@ export default function MeetingRoom() {
                         </button>
                       </div>
                     </div>
-                    {renderVideoElement('screen', "grid-video", true, true)}
+                    <video
+                      ref={screenVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="grid-video"
+                      onLoadedMetadata={(e) => e.target.play().catch(console.error)}
+                    />
                   </div>
                 )}
 
-                {/* Remote Videos in Grid */}
-                {participants.map(participant => (
-                  <div 
-                    key={participant.id} 
-                    className={`video-grid-item ${pinnedUser === participant.id ? 'pinned' : ''} ${maximizedVideo === participant.id ? 'maximized' : ''}`}
+                {participants.map((participant) => (
+                  <div
+                    key={participant.id}
+                    className={`video-grid-item ${
+                      pinnedUser === participant.id ? "pinned" : ""
+                    } ${maximizedVideo === participant.id ? "maximized" : ""}`}
                   >
                     <div className="video-overlay">
-                      <span className="video-name">{participant.user?.name || `User ${participant.id.slice(-4)}`}</span>
+                      <span className="video-name">
+                        {participant.user?.name || `User ${participant.id.slice(-4)}`}
+                      </span>
                       <div className="video-actions">
-                        <button 
+                        <button
                           onClick={() => handleMaximizeVideo(participant.id)}
                           className="video-action-btn maximize"
                           title="Maximize"
                         >
                           ⛶
                         </button>
-                        <button 
+                        <button
                           onClick={() => handlePinUser(participant.id)}
-                          className={`video-action-btn pin ${pinnedUser === participant.id ? 'active' : ''}`}
-                          title={pinnedUser === participant.id ? 'Unpin' : 'Pin'}
+                          className={`video-action-btn pin ${
+                            pinnedUser === participant.id ? "active" : ""
+                          }`}
+                          title={pinnedUser === participant.id ? "Unpin" : "Pin"}
                         >
-                          {pinnedUser === participant.id ? '📌' : '📌'}
+                          📌
                         </button>
                       </div>
                     </div>
@@ -796,12 +918,11 @@ export default function MeetingRoom() {
               </div>
             </div>
 
-            {/* Participants List Sidebar */}
             {showParticipantsList && (
               <div className="participants-sidebar">
                 <div className="sidebar-header">
                   <h4>Participants ({participants.length + 1})</h4>
-                  <button 
+                  <button
                     onClick={() => setShowParticipantsList(false)}
                     className="close-sidebar"
                   >
@@ -817,15 +938,19 @@ export default function MeetingRoom() {
                       {isScreenSharing && <span className="status-sharing">🖥️</span>}
                     </div>
                   </div>
-                  {participants.map(participant => (
+                  {participants.map((participant) => (
                     <div key={participant.id} className="participant-item">
-                      <span className="participant-name">👤 {participant.user?.name || `User ${participant.id.slice(-4)}`}</span>
+                      <span className="participant-name">
+                        👤 {participant.user?.name || `User ${participant.id.slice(-4)}`}
+                      </span>
                       <div className="participant-actions">
-                        <button 
+                        <button
                           onClick={() => handlePinUser(participant.id)}
-                          className={`pin-btn ${pinnedUser === participant.id ? 'active' : ''}`}
+                          className={`pin-btn ${
+                            pinnedUser === participant.id ? "active" : ""
+                          }`}
                         >
-                          {pinnedUser === participant.id ? '📌' : '📌'}
+                          📌
                         </button>
                       </div>
                     </div>
@@ -835,38 +960,37 @@ export default function MeetingRoom() {
             )}
           </div>
 
-          {/* Controls */}
           <div className="control-bar">
             <div className="media-controls">
-              <button 
-                onClick={() => toggleMedia('audio')}
-                className={`control-btn ${!mediaState.audio ? 'muted' : ''}`}
-                title={mediaState.audio ? 'Mute' : 'Unmute'}
+              <button
+                onClick={() => toggleMedia("audio")}
+                className={`control-btn ${!mediaState.audio ? "muted" : ""}`}
+                title={mediaState.audio ? "Mute" : "Unmute"}
               >
-                {mediaState.audio ? '🎤' : '🔇'}
+                {mediaState.audio ? "🎤" : "🔇"}
               </button>
-              <button 
-                onClick={() => toggleMedia('video')}
-                className={`control-btn ${!mediaState.video ? 'muted' : ''}`}
-                title={mediaState.video ? 'Turn off camera' : 'Turn on camera'}
+              <button
+                onClick={() => toggleMedia("video")}
+                className={`control-btn ${!mediaState.video ? "muted" : ""}`}
+                title={mediaState.video ? "Turn off camera" : "Turn on camera"}
               >
-                {mediaState.video ? '📹' : '📷 off'}
+                {mediaState.video ? "📹" : "📷 off"}
               </button>
-              <button 
+              <button
                 onClick={toggleScreenShare}
-                className={`control-btn ${isScreenSharing ? 'active' : ''}`}
-                title={isScreenSharing ? 'Stop screen share' : 'Share screen'}
+                className={`control-btn ${isScreenSharing ? "active" : ""}`}
+                title={isScreenSharing ? "Stop screen share" : "Share screen"}
               >
-                {isScreenSharing ? '🖥️ Stop' : '🖥️ Share'}
+                {isScreenSharing ? "🖥️ Stop" : "🖥️ Share"}
               </button>
-              <button 
+              <button
                 onClick={toggleRecording}
-                className={`control-btn ${isRecording ? 'recording' : ''}`}
-                title={isRecording ? 'Stop recording' : 'Start recording'}
+                className={`control-btn ${isRecording ? "recording" : ""}`}
+                title={isRecording ? "Stop recording" : "Start recording"}
               >
-                {isRecording ? '⏹️ Stop' : '⏺️ Record'}
+                {isRecording ? "⏹️ Stop" : "⏺️ Record"}
               </button>
-              <button 
+              <button
                 onClick={() => setShowParticipantsList(!showParticipantsList)}
                 className="control-btn"
                 title="Participants list"
@@ -874,22 +998,17 @@ export default function MeetingRoom() {
                 👥 ({participants.length + 1})
               </button>
             </div>
-            
-            <button 
-              onClick={leaveMeeting}
-              className="leave-button"
-              title="Leave meeting"
-            >
+
+            <button onClick={leaveMeeting} className="leave-button" title="Leave meeting">
               Leave Meeting
             </button>
           </div>
 
-          {/* Chat Area */}
           <div className="chat-area">
             <div className="chat-header">
               <h4>Chat ({chat.length})</h4>
             </div>
-            
+
             <div className="chat-messages">
               {chat.map((msg) => (
                 <div key={msg.id} className="chat-message">
@@ -912,10 +1031,10 @@ export default function MeetingRoom() {
                 placeholder="Type a message..."
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyPress}
                 disabled={!socketRef.current}
               />
-              <button 
+              <button
                 onClick={sendChatMessage}
                 disabled={!message.trim() || !socketRef.current}
               >
@@ -1126,7 +1245,7 @@ export default function MeetingRoom() {
           display: flex;
           flex-direction: column;
           gap: 20px;
-          height: 80vh;
+          height: auto;
         }
 
         .video-main-area {
@@ -1149,6 +1268,29 @@ export default function MeetingRoom() {
           height: 100%;
           display: flex;
           flex-direction: column;
+        }
+
+        .video-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+          color: #2c3e50;
+          font-weight: 600;
+        }
+
+        .media-indicators {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .muted-indicator,
+        .sharing-indicator {
+          background: #f1f3f5;
+          padding: 6px 10px;
+          border-radius: 20px;
+          font-size: 12px;
         }
 
         .maximized-header,
@@ -1184,29 +1326,23 @@ export default function MeetingRoom() {
           background: #5a6268;
         }
 
-        .maximized-video {
+        .maximized-video,
+        .pinned-video,
+        .local-video-main {
           width: 100%;
-          height: 100%;
           background: #000;
           border-radius: 12px;
+          object-fit: cover;
+        }
+
+        .maximized-video {
+          height: 520px;
           object-fit: contain;
         }
 
-        .pinned-video {
-          width: 100%;
-          height: 100%;
-          background: #000;
-          border-radius: 12px;
-          object-fit: cover;
-        }
-
+        .pinned-video,
         .local-video-main {
-          width: 100%;
-          height: 100%;
-          max-height: 400px;
-          background: #000;
-          border-radius: 12px;
-          object-fit: cover;
+          height: 420px;
         }
 
         .meeting-content {
@@ -1252,7 +1388,7 @@ export default function MeetingRoom() {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
           gap: 15px;
-          max-height: 300px;
+          max-height: 360px;
           overflow-y: auto;
         }
 
@@ -1341,7 +1477,7 @@ export default function MeetingRoom() {
           box-shadow: 0 8px 32px rgba(0,0,0,0.1);
           backdrop-filter: blur(10px);
           width: 280px;
-          max-height: 400px;
+          max-height: 420px;
           display: flex;
           flex-direction: column;
         }
@@ -1451,6 +1587,7 @@ export default function MeetingRoom() {
         .media-controls {
           display: flex;
           gap: 10px;
+          flex-wrap: wrap;
         }
 
         .control-btn {
@@ -1644,13 +1781,18 @@ export default function MeetingRoom() {
           }
 
           .media-controls {
-            flex-wrap: wrap;
             justify-content: center;
           }
 
           .control-btn {
             min-width: 50px;
             padding: 10px 15px;
+          }
+
+          .maximized-video,
+          .pinned-video,
+          .local-video-main {
+            height: 280px;
           }
         }
       `}</style>
