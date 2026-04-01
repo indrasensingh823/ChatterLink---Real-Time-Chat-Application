@@ -50,10 +50,10 @@ const Footer = () => (
   <footer className="app-footer">
     <div className="footer-content">
       <div className="social-links">
-        <a href="#" className="social-link instagram" aria-label="Instagram">
+        <a href="https://instagram.com" className="social-link instagram" aria-label="Instagram">
           <i className="fab fa-instagram"></i>
         </a>
-        <a href="#" className="social-link facebook" aria-label="Facebook">
+        <a href="https://facebook.com" className="social-link facebook" aria-label="Facebook">
           <i className="fab fa-facebook-f"></i>
         </a>
         <a href="mailto:indrasensingh770@gmail.com" className="social-link email" aria-label="Email">
