@@ -1,5 +1,5 @@
 // src/pages/MeetingCreate.js
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/meeting.css";
 
@@ -8,53 +8,59 @@ export default function MeetingCreate() {
   const [desc, setDesc] = useState("");
   const [startAt, setStartAt] = useState("");
   const [host, setHost] = useState("");
-  const [duration, setDuration] = useState(60);
+  const [duration, setDuration] = useState(60); // Default 60 minutes
   const [creating, setCreating] = useState(false);
   const [dbStatus, setDbStatus] = useState("checking");
   const [createdMeetings, setCreatedMeetings] = useState([]);
-  const [activeTab, setActiveTab] = useState("create");
-  const [autoRetryUsed, setAutoRetryUsed] = useState(false);
-
+  const [activeTab, setActiveTab] = useState("create"); // 'create', 'upcoming', 'past', 'recordings'
   const navigate = useNavigate();
 
+  // API base URL
   const API_BASE =
     process.env.NODE_ENV === "production"
       ? window.location.origin
       : "http://localhost:5001";
 
-  const getLocalDateTimeInputValue = (dateObj) => {
-    const year = dateObj.getFullYear();
-    const month = String(dateObj.getMonth() + 1).padStart(2, "0");
-    const day = String(dateObj.getDate()).padStart(2, "0");
-    const hours = String(dateObj.getHours()).padStart(2, "0");
-    const minutes = String(dateObj.getMinutes()).padStart(2, "0");
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-  };
-
-  const getNowMinValue = () => getLocalDateTimeInputValue(new Date());
-
-  useEffect(() => {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() + 30);
-    setStartAt(getLocalDateTimeInputValue(now));
-
-    const savedName = localStorage.getItem("userName") || "Host";
-    setHost(savedName);
-
-    checkDbStatus();
-    loadCreatedMeetings();
-  }, []);
-
   const checkDbStatus = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/db-status`);
       const data = await response.json();
-      setDbStatus(data?.database || "disconnected");
+      setDbStatus(data.database);
     } catch (error) {
       console.error("Failed to check DB status:", error);
       setDbStatus("disconnected");
     }
   }, [API_BASE]);
+
+  const loadCreatedMeetings = useCallback(() => {
+    const savedMeetings = localStorage.getItem("createdMeetings");
+    if (savedMeetings) {
+      setCreatedMeetings(JSON.parse(savedMeetings));
+    }
+  }, []);
+
+  const saveCreatedMeeting = useCallback((meetingData) => {
+    setCreatedMeetings((prevMeetings) => {
+      const updatedMeetings = [...prevMeetings, meetingData];
+      localStorage.setItem("createdMeetings", JSON.stringify(updatedMeetings));
+      return updatedMeetings;
+    });
+  }, []);
+
+  const copyToClipboard = useCallback((text) => {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        alert("Meeting link copied to clipboard!");
+      })
+      .catch((err) => {
+        console.error("Failed to copy: ", err);
+      });
+  }, []);
+
+  const generateMeetingLink = useCallback((meetingId) => {
+    return `${window.location.origin}/meeting/${meetingId}`;
+  }, []);
 
   const fixDatabaseIssue = useCallback(async () => {
     try {
@@ -62,66 +68,45 @@ export default function MeetingCreate() {
         method: "POST",
       });
       const data = await response.json();
-
       if (data.success) {
         alert("Database cleanup successful! Try creating meeting again.");
         checkDbStatus();
       } else {
-        alert("Cleanup failed: " + (data.message || "Unknown error"));
+        alert("Cleanup failed: " + data.message);
       }
     } catch (error) {
-      console.error("Cleanup request failed:", error);
       alert("Cleanup request failed: " + error.message);
     }
   }, [API_BASE, checkDbStatus]);
 
-  const loadCreatedMeetings = () => {
-    try {
-      const savedMeetings = localStorage.getItem("createdMeetings");
-      if (savedMeetings) {
-        const parsed = JSON.parse(savedMeetings);
-        if (Array.isArray(parsed)) {
-          setCreatedMeetings(parsed);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to load meetings from localStorage:", error);
-      setCreatedMeetings([]);
-    }
-  };
+  // Set default start time to current time + 30 minutes
+  useEffect(() => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 30);
 
-  const saveCreatedMeeting = (meetingData) => {
-    const updatedMeetings = [meetingData, ...createdMeetings];
-    setCreatedMeetings(updatedMeetings);
-    localStorage.setItem("createdMeetings", JSON.stringify(updatedMeetings));
-  };
+    // Format for datetime-local input (YYYY-MM-DDTHH:MM)
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
 
-  const copyToClipboard = async (text) => {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const tempInput = document.createElement("textarea");
-        tempInput.value = text;
-        document.body.appendChild(tempInput);
-        tempInput.select();
-        document.execCommand("copy");
-        document.body.removeChild(tempInput);
-      }
-      alert("Meeting link copied to clipboard!");
-    } catch (err) {
-      console.error("Failed to copy:", err);
-      alert("Failed to copy meeting link.");
-    }
-  };
+    const defaultDateTime = `${year}-${month}-${day}T${hours}:${minutes}`;
+    setStartAt(defaultDateTime);
 
-  const generateMeetingLink = (meetingId) => {
-    return `${window.location.origin}/meeting/${meetingId}`;
-  };
+    // Set default host name
+    const savedName = localStorage.getItem("userName") || "Host";
+    setHost(savedName);
 
-  const createMeeting = async (retryAfterDbFallback = false) => {
-    if (creating) return;
+    // Check database status
+    checkDbStatus();
 
+    // Load created meetings from localStorage
+    loadCreatedMeetings();
+  }, [checkDbStatus, loadCreatedMeetings]);
+
+  const createMeeting = useCallback(async () => {
+    // Validation
     if (!title.trim()) {
       alert("Meeting title is required");
       return;
@@ -132,9 +117,9 @@ export default function MeetingCreate() {
       return;
     }
 
+    // Validate if start time is in the future
     const selectedTime = new Date(startAt);
     const currentTime = new Date();
-
     if (selectedTime <= currentTime) {
       alert("Meeting start time must be in the future");
       return;
@@ -143,22 +128,26 @@ export default function MeetingCreate() {
     setCreating(true);
 
     try {
-      const payload = {
+      console.log("Creating meeting with data:", {
         title: title.trim(),
         description: desc.trim(),
         startAt: new Date(startAt).toISOString(),
         host: host.trim() || "Anonymous Host",
-        duration: Number(duration),
-      };
-
-      console.log("Creating meeting with data:", payload);
+        duration: duration,
+      });
 
       const response = await fetch(`${API_BASE}/api/meetings`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          title: title.trim(),
+          description: desc.trim(),
+          startAt: new Date(startAt).toISOString(),
+          host: host.trim() || "Anonymous Host",
+          duration: duration,
+        }),
       });
 
       const data = await response.json();
@@ -171,13 +160,14 @@ export default function MeetingCreate() {
         const meetingId = data.meetingId;
         const meetingLink = generateMeetingLink(meetingId);
 
+        // Save meeting data
         const meetingData = {
           id: meetingId,
-          title: payload.title,
-          description: payload.description,
-          startAt: payload.startAt,
-          host: payload.host,
-          duration: payload.duration,
+          title: title.trim(),
+          description: desc.trim(),
+          startAt: new Date(startAt).toISOString(),
+          host: host.trim() || "Anonymous Host",
+          duration: duration,
           link: meetingLink,
           createdAt: new Date().toISOString(),
           status: "scheduled",
@@ -185,12 +175,9 @@ export default function MeetingCreate() {
 
         saveCreatedMeeting(meetingData);
 
-        if (payload.host) {
-          localStorage.setItem("userName", payload.host);
-        }
-
         console.log("Meeting created successfully:", meetingId);
 
+        // Show storage type message
         if (data.storage === "in-memory") {
           alert(
             "Meeting created successfully! (Note: Using temporary storage - meetings will be lost on server restart)"
@@ -199,7 +186,12 @@ export default function MeetingCreate() {
           alert("Meeting created successfully!");
         }
 
-        setAutoRetryUsed(false);
+        // Save host name for future use
+        if (host.trim()) {
+          localStorage.setItem("userName", host.trim());
+        }
+
+        // Show shareable link
         setActiveTab("upcoming");
       } else {
         throw new Error(data.message || "Failed to create meeting");
@@ -207,61 +199,63 @@ export default function MeetingCreate() {
     } catch (error) {
       console.error("Create meeting error:", error);
 
-      if (error.name === "TypeError" && error.message.toLowerCase().includes("fetch")) {
+      // Better error messages with specific handling for duplicate key error
+      if (error.name === "TypeError" && error.message.includes("fetch")) {
         alert(
           "Network error: Cannot connect to server. Please make sure the server is running on port 5001."
         );
       } else if (
         error.message.includes("E11000") ||
-        error.message.toLowerCase().includes("duplicate key")
+        error.message.includes("duplicate key")
       ) {
         alert(
-          "Database duplicate key error. This is a known issue. We're automatically fixing it. Please try again in a few seconds."
+          "Database duplicate key error. This is a known issue. " +
+            "We're automatically fixing it. Please try again in a few seconds."
         );
-
+        // Auto-fix the issue
         setTimeout(() => {
           fixDatabaseIssue();
         }, 1000);
       } else if (
-        (error.message.toLowerCase().includes("mongo") ||
-          error.message.toLowerCase().includes("database")) &&
-        !retryAfterDbFallback &&
-        !autoRetryUsed
+        error.message.includes("Mongo") ||
+        error.message.includes("database")
       ) {
-        alert("Database connection issue. Trying again using fallback logic...");
-        setAutoRetryUsed(true);
-
-        setTimeout(() => {
-          createMeeting(true);
-        }, 1000);
+        alert("Database connection issue. Trying to create meeting in temporary storage...");
+        // Retry after showing message
+        setTimeout(() => createMeeting(), 100);
       } else {
         alert(`Create failed: ${error.message}`);
       }
     } finally {
       setCreating(false);
     }
-  };
+  }, [
+    title,
+    desc,
+    startAt,
+    host,
+    duration,
+    API_BASE,
+    generateMeetingLink,
+    saveCreatedMeeting,
+    fixDatabaseIssue,
+  ]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     createMeeting();
   };
 
-  const isFormValid = useMemo(() => {
-    return title.trim() && startAt && new Date(startAt) > new Date();
-  }, [title, startAt]);
+  const isFormValid = title.trim() && startAt && new Date(startAt) > new Date();
 
-  const upcomingMeetings = useMemo(() => {
-    return createdMeetings
-      .filter((meeting) => new Date(meeting.startAt) > new Date())
-      .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
-  }, [createdMeetings]);
+  // Filter meetings by status
+  const upcomingMeetings = createdMeetings
+    .filter((meeting) => new Date(meeting.startAt) > new Date())
+    .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
 
-  const pastMeetings = useMemo(() => {
-    return createdMeetings
-      .filter((meeting) => new Date(meeting.startAt) <= new Date())
-      .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
-  }, [createdMeetings]);
+  const pastMeetings = createdMeetings
+    .filter((meeting) => new Date(meeting.startAt) <= new Date())
+    .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
 
   const formatDateTime = (dateString) => {
     const date = new Date(dateString);
@@ -293,11 +287,8 @@ export default function MeetingCreate() {
           <p className="subtitle">Create, schedule and manage your video meetings</p>
         </div>
 
-        <div
-          className={`db-status ${
-            dbStatus === "connected" ? "connected" : "disconnected"
-          }`}
-        >
+        {/* Database Status Indicator */}
+        <div className={`db-status ${dbStatus === "connected" ? "connected" : "disconnected"}`}>
           <span className="status-indicator"></span>
           Database: {dbStatus === "connected" ? "Connected" : "Using Temporary Storage"}
           {dbStatus === "connected" && (
@@ -307,6 +298,7 @@ export default function MeetingCreate() {
           )}
         </div>
 
+        {/* Navigation Tabs */}
         <div className="tabs-container">
           <div className="tabs">
             <button
@@ -336,6 +328,7 @@ export default function MeetingCreate() {
           </div>
         </div>
 
+        {/* Create Meeting Tab */}
         {activeTab === "create" && (
           <div className="tab-content">
             <form onSubmit={handleSubmit} className="meeting-form">
@@ -390,12 +383,10 @@ export default function MeetingCreate() {
                     type="datetime-local"
                     value={startAt}
                     onChange={(e) => setStartAt(e.target.value)}
-                    min={getNowMinValue()}
+                    min={new Date().toISOString().slice(0, 16)}
                     disabled={creating}
                   />
-                  <div className="help-text">
-                    Select when you want the meeting to start
-                  </div>
+                  <div className="help-text">Select when you want the meeting to start</div>
                 </div>
 
                 <div className="form-group">
@@ -403,7 +394,7 @@ export default function MeetingCreate() {
                   <select
                     id="duration"
                     value={duration}
-                    onChange={(e) => setDuration(parseInt(e.target.value, 10))}
+                    onChange={(e) => setDuration(parseInt(e.target.value))}
                     disabled={creating}
                   >
                     <option value={30}>30 minutes</option>
@@ -454,6 +445,7 @@ export default function MeetingCreate() {
           </div>
         )}
 
+        {/* Upcoming Meetings Tab */}
         {activeTab === "upcoming" && (
           <div className="tab-content">
             <div className="meetings-header">
@@ -544,6 +536,7 @@ export default function MeetingCreate() {
           </div>
         )}
 
+        {/* Past Meetings Tab */}
         {activeTab === "past" && (
           <div className="tab-content">
             <div className="meetings-header">
@@ -589,6 +582,7 @@ export default function MeetingCreate() {
           </div>
         )}
 
+        {/* Recordings Tab */}
         {activeTab === "recordings" && (
           <div className="tab-content">
             <div className="meetings-header">
@@ -600,8 +594,8 @@ export default function MeetingCreate() {
               <div className="empty-icon">🎥</div>
               <h4>Recording Feature Coming Soon</h4>
               <p>
-                We're working on bringing you the ability to record and playback
-                your meetings.
+                We're working on bringing you the ability to record and playback your
+                meetings.
               </p>
               <div className="feature-list">
                 <h5>Planned Features:</h5>
