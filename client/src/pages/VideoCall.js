@@ -2,9 +2,12 @@ import React, { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
 import "../styles/VideoCall.css";
 
-const SOCKET_SERVER = window.location.hostname === "localhost"
-  ? "http://localhost:5001"
-  : `http://${window.location.hostname}:5001`;
+// const SOCKET_SERVER = window.location.hostname === "localhost"
+//   ? "http://localhost:5001"
+//   : `http://${window.location.hostname}:5001`;
+
+const SOCKET_SERVER_URL =
+  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
 
 const STUN_SERVERS = {
   iceServers: [

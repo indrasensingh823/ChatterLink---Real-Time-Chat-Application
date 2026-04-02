@@ -4,11 +4,14 @@ import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import '../styles/PrivateChatCreate.css'; // We'll create this CSS file
 
-const socket = io(
-  window.location.hostname === "localhost"
-    ? "http://localhost:5001"
-    : `http://${window.location.hostname}:5001`
-);
+// const socket = io(
+//   window.location.hostname === "localhost"
+//     ? "http://localhost:5001"
+//     : `http://${window.location.hostname}:5001`
+// );
+
+const SOCKET_SERVER_URL =
+  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
 
 function PrivateChatCreate() {
   const navigate = useNavigate();

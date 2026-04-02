@@ -3,10 +3,13 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import io from "socket.io-client";
 
-const SOCKET_URL =
-  process.env.NODE_ENV === "production"
-    ? window.location.origin
-    : "http://localhost:5001";
+// const SOCKET_URL =
+//   process.env.NODE_ENV === "production"
+//     ? window.location.origin
+//     : "http://localhost:5001";
+
+const SOCKET_SERVER_URL =
+  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
 
 export default function MeetingRoom() {
   const { id: meetingId } = useParams();

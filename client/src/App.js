@@ -14,19 +14,19 @@ import MeetingRoom from "./pages/MeetingRoom.js";
 import './App.css';
 
 // ✅ Backend URL (Production + Local)
-// const SOCKET_SERVER_URL =
-//   process.env.REACT_APP_SOCKET_SERVER_URL ||
-//   (window.location.hostname === "localhost"
-//     ? "http://localhost:5001"
-//     : "https://chatter-link-real-time-chat-applica-five.vercel.app");
+const SOCKET_SERVER_URL =
+  process.env.REACT_APP_SOCKET_SERVER_URL ||
+  (window.location.hostname === "localhost"
+    ? "http://localhost:5001"
+    : "https://chatter-link-real-time-chat-applica-five.vercel.app");
 
 // ✅ Always use deployed backend
-const SOCKET_SERVER_URL =
-  process.env.REACT_APP_SOCKET_SERVER_URL || "https://chatter-link-real-time-chat-applica-five.vercel.app";
+// const SOCKET_SERVER_URL =
+//   process.env.REACT_APP_SOCKET_SERVER_URL || "https://chatter-link-real-time-chat-applica-five.vercel.app";
 
-console.log("🌐 SOCKET_SERVER_URL:", SOCKET_SERVER_URL);
+// console.log("🌐 SOCKET_SERVER_URL:", SOCKET_SERVER_URL);
 
-console.log("🌐 SOCKET_SERVER_URL:", SOCKET_SERVER_URL);
+
 
 // Enhanced Header Component
 const Header = () => (

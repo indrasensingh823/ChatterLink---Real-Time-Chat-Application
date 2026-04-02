@@ -16,10 +16,13 @@ export default function MeetingCreate() {
   const navigate = useNavigate();
 
   // API base URL
-  const API_BASE =
-    process.env.NODE_ENV === "production"
-      ? window.location.origin
-      : "http://localhost:5001";
+  // const API_BASE =
+  //   process.env.NODE_ENV === "production"
+  //     ? window.location.origin
+  //     : "http://localhost:5001";
+
+const SOCKET_SERVER_URL =
+  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
 
   const checkDbStatus = useCallback(async () => {
     try {
