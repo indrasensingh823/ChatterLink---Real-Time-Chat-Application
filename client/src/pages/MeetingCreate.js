@@ -2,8 +2,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/meeting.css";
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { API_BASE } from "../config.js";
 
 export default function MeetingCreate() {
@@ -18,15 +16,6 @@ export default function MeetingCreate() {
   const [activeTab, setActiveTab] = useState("create"); // 'create', 'upcoming', 'past', 'recordings'
   const navigate = useNavigate();
 
-  // API base URL
-  // const API_BASE =
-  //   process.env.NODE_ENV === "production"
-  //     ? window.location.origin
-  //     : "http://localhost:5001";
-
-const SOCKET_SERVER_URL =
-  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
-
   const checkDbStatus = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/db-status`);
@@ -36,7 +25,7 @@ const SOCKET_SERVER_URL =
       console.error("Failed to check DB status:", error);
       setDbStatus("disconnected");
     }
-  }, [API_BASE]);
+  }, []);
 
   const loadCreatedMeetings = useCallback(() => {
     const savedMeetings = localStorage.getItem("createdMeetings");
@@ -70,7 +59,7 @@ const SOCKET_SERVER_URL =
 
   const fixDatabaseIssue = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/cleanup-duplicates`, {
+      const response = await fetch(`${API_BASE}/api/cleanup-db`, {
         method: "POST",
       });
       const data = await response.json();
@@ -83,7 +72,7 @@ const SOCKET_SERVER_URL =
     } catch (error) {
       alert("Cleanup request failed: " + error.message);
     }
-  }, [API_BASE, checkDbStatus]);
+  }, [checkDbStatus]);
 
   // Set default start time to current time + 30 minutes
   useEffect(() => {
@@ -241,7 +230,6 @@ const SOCKET_SERVER_URL =
     startAt,
     host,
     duration,
-    API_BASE,
     generateMeetingLink,
     saveCreatedMeeting,
     fixDatabaseIssue,

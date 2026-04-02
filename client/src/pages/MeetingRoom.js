@@ -2,7 +2,8 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import io from "socket.io-client";
-import { API_BASE, SOCKET_URL } from "../config.js";
+import { API_BASE, SOCKET_SERVER_URL } from "../config.js";
+
 
 
 // const SOCKET_URL =
@@ -12,11 +13,6 @@ import { API_BASE, SOCKET_URL } from "../config.js";
 
 
 
-const API_BASE =
-  process.env.REACT_APP_API_BASE || "http://localhost:5001";
-
-const SOCKET_SERVER_URL =
-  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
 
 export default function MeetingRoom() {
   const { id: meetingId } = useParams();
@@ -66,7 +62,7 @@ export default function MeetingRoom() {
     const fetchMeeting = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`${SOCKET_URL}/api/meetings/${meetingId}`);
+        const response = await fetch(`${API_BASE}/api/meetings/${meetingId}`);
         const data = await response.json();
 
         if (data.success) {
@@ -381,7 +377,7 @@ export default function MeetingRoom() {
         localVideoRef.current.srcObject = stream;
       }
 
-      socketRef.current = io(SOCKET_URL, {
+    socketRef.current = io(SOCKET_SERVER_URL, {
         transports: ["websocket", "polling"],
       });
 
@@ -580,7 +576,7 @@ export default function MeetingRoom() {
       const formData = new FormData();
       formData.append("file", blob, `recording_${meetingId}_${Date.now()}.webm`);
 
-      const response = await fetch(`${SOCKET_URL}/api/meetings/${meetingId}/recording`, {
+      const response = await fetch(`${API_BASE}/api/meetings/${meetingId}/recording`, {
         method: "POST",
         body: formData,
       });
