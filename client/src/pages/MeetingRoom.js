@@ -2,11 +2,18 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import io from "socket.io-client";
+import { API_BASE, SOCKET_URL } from "../config.js";
+
 
 // const SOCKET_URL =
 //   process.env.NODE_ENV === "production"
 //     ? window.location.origin
 //     : "http://localhost:5001";
+
+
+
+const API_BASE =
+  process.env.REACT_APP_API_BASE || "http://localhost:5001";
 
 const SOCKET_SERVER_URL =
   process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";

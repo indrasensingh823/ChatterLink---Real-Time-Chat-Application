@@ -2,6 +2,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/meeting.css";
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { API_BASE } from "../config.js";
 
 export default function MeetingCreate() {
   const [title, setTitle] = useState("");
