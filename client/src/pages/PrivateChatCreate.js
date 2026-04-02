@@ -1,17 +1,8 @@
 // PrivateChatCreate.js
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
-import '../styles/PrivateChatCreate.css'; // We'll create this CSS file
-
-// const socket = io(
-//   window.location.hostname === "localhost"
-//     ? "http://localhost:5001"
-//     : `http://${window.location.hostname}:5001`
-// );
-
-const SOCKET_SERVER_URL =
-  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
+import { socket } from '../socket';
+import '../styles/PrivateChatCreate.css';
 
 function PrivateChatCreate() {
   const navigate = useNavigate();
@@ -21,25 +12,36 @@ function PrivateChatCreate() {
 
   const createRoom = async () => {
     setIsCreating(true);
-    
-    // Simulate loading for better UX
+
     await new Promise(resolve => setTimeout(resolve, 1000));
-    
+
     const newRoomId = Math.random().toString(36).substring(2, 8).toUpperCase();
     const newPasscode = Math.floor(1000 + Math.random() * 9000).toString();
-    
-    socket.emit('createPrivateRoom', { roomId: newRoomId, passcode: newPasscode });
-    setRoomInfo({ roomId: newRoomId, passcode: newPasscode });
+    const username = `User${Math.floor(1000 + Math.random() * 9000)}`;
+
+    socket.emit('createPrivateRoom', {
+      roomId: newRoomId,
+      passcode: newPasscode,
+      username
+    });
+
+    setRoomInfo({
+      roomId: newRoomId,
+      passcode: newPasscode,
+      username
+    });
+
     setIsCreating(false);
   };
 
   const goToRoom = () => {
     if (roomInfo) {
-      navigate(`/private/${roomInfo.roomId}`, { 
-        state: { 
+      navigate(`/private/${roomInfo.roomId}`, {
+        state: {
           passcode: roomInfo.passcode,
-          isCreator: true 
-        } 
+          isCreator: true,
+          username: roomInfo.username
+        }
       });
     }
   };
@@ -51,16 +53,20 @@ function PrivateChatCreate() {
   };
 
   const shareRoom = () => {
+    if (!roomInfo) return;
+
     const shareData = {
       title: 'Join My Private Chat Room',
-      text: `Join my private chat room on ChatterLink! Room ID: ${roomInfo.roomId}`,
+      text: `Join my private chat room on ChatterLink! Room ID: ${roomInfo.roomId}, Passcode: ${roomInfo.passcode}`,
       url: `${window.location.origin}/private/${roomInfo.roomId}`
     };
-    
+
     if (navigator.share) {
       navigator.share(shareData);
     } else {
-      copyToClipboard(`${window.location.origin}/private/${roomInfo.roomId}`);
+      copyToClipboard(
+        `Room ID: ${roomInfo.roomId}\nPasscode: ${roomInfo.passcode}\nLink: ${window.location.origin}/private/${roomInfo.roomId}`
+      );
     }
   };
 
@@ -99,7 +105,7 @@ function PrivateChatCreate() {
               </div>
             </div>
 
-            <button 
+            <button
               onClick={createRoom}
               className={`create-button ${isCreating ? 'creating' : ''}`}
               disabled={isCreating}
@@ -149,8 +155,12 @@ function PrivateChatCreate() {
                 <div className="link-value">
                   {window.location.origin}/private/{roomInfo.roomId}
                 </div>
-                <button 
-                  onClick={() => copyToClipboard(`${window.location.origin}/private/${roomInfo.roomId}`)}
+                <button
+                  onClick={() =>
+                    copyToClipboard(
+                      `Room ID: ${roomInfo.roomId}\nPasscode: ${roomInfo.passcode}\nLink: ${window.location.origin}/private/${roomInfo.roomId}`
+                    )
+                  }
                   className="copy-button"
                 >
                   {copied ? '✅ Copied!' : '📋 Copy'}
@@ -168,8 +178,8 @@ function PrivateChatCreate() {
                 <span className="button-icon">🚪</span>
                 Enter Room Now
               </button>
-              
-              <button 
+
+              <button
                 onClick={() => setRoomInfo(null)}
                 className="create-new-button"
               >

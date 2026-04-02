@@ -1,14 +1,9 @@
 // PrivateChatRoom.js
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
-import '../styles/PrivateChatRoom.css'; // We'll create this CSS file
+import { socket } from '../socket';
+import '../styles/PrivateChatRoom.css';
 
-// const socket = io(
-//   window.location.hostname === "localhost"
-//     ? "http://localhost:5001"
-//     : `http://${window.location.hostname}:5001`
-// );
 
 const SOCKET_SERVER_URL =
   process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
@@ -17,9 +12,12 @@ function PrivateChatRoom() {
   const { roomId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+
   const initialPasscode = location.state?.passcode || '';
+  const initialUsername =
+    location.state?.username || `User${Math.floor(1000 + Math.random() * 9000)}`;
   const isCreator = location.state?.isCreator || false;
-  
+
   const [passcodeInput, setPasscodeInput] = useState(initialPasscode);
   const [verified, setVerified] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -28,99 +26,109 @@ function PrivateChatRoom() {
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingUser, setTypingUser] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    if (verified) {
-      socket.on('privateMessage', (data) => {
-        const newMessage = {
-          id: Date.now() + Math.random(),
-          userId: data.userId,
-          username: data.userId === socket.id ? 'You' : `User ${data.userId.slice(-4)}`,
-          text: data.message,
-          time: new Date().toLocaleTimeString('en-IN', {
-            hour: '2-digit',
-            minute: '2-digit'
-          }),
-          isOwn: data.userId === socket.id
-        };
-        setMessages(prev => [...prev, newMessage]);
-      });
+    if (!verified) return;
 
-      // Handle file upload events
-      socket.on('file_uploaded', (data) => {
-        const newMessage = {
-          id: Date.now() + Math.random(),
-          userId: data.user,
-          username: data.user === socket.id ? 'You' : `User ${data.user.slice(-4)}`,
-          file: data.file,
-          time: data.time,
-          isOwn: data.user === socket.id,
-          isFile: true
-        };
-        setMessages(prev => [...prev, newMessage]);
-      });
+    const handlePrivateMessage = (data) => {
+      const newMessage = {
+        id: data.id || Date.now() + Math.random(),
+        userId: data.userId,
+        username: data.userId === socket.id ? 'You' : data.username || `User ${data.userId.slice(-4)}`,
+        text: data.message,
+        time: data.time,
+        isOwn: data.userId === socket.id
+      };
+      setMessages(prev => [...prev, newMessage]);
+    };
 
-      socket.on('userJoined', (data) => {
-        setOnlineUsers(prev => [...prev, data.userId]);
-        setMessages(prev => [...prev, {
-          id: Date.now(),
+    const handlePrivateFile = (data) => {
+      const newMessage = {
+        id: data.id || Date.now() + Math.random(),
+        userId: data.userId,
+        username: data.userId === socket.id ? 'You' : data.username || `User ${data.userId.slice(-4)}`,
+        file: data.file,
+        time: data.time,
+        isOwn: data.userId === socket.id,
+        isFile: true
+      };
+      setMessages(prev => [...prev, newMessage]);
+    };
+
+    const handleUserJoined = (data) => {
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now() + Math.random(),
           userId: 'system',
           username: 'System',
-          text: `${data.userId === socket.id ? 'You' : `User ${data.userId.slice(-4)}`} joined the room`,
+          text: data.message || `${data.username} joined the room`,
           time: new Date().toLocaleTimeString('en-IN', {
             hour: '2-digit',
             minute: '2-digit'
           }),
           isSystem: true
-        }]);
-      });
-
-      socket.on('userLeft', (data) => {
-        setOnlineUsers(prev => prev.filter(id => id !== data.userId));
-        setMessages(prev => [...prev, {
-          id: Date.now(),
-          userId: 'system',
-          username: 'System',
-          text: `User ${data.userId.slice(-4)} left the room`,
-          time: new Date().toLocaleTimeString('en-IN', {
-            hour: '2-digit',
-            minute: '2-digit'
-          }),
-          isSystem: true
-        }]);
-      });
-
-      socket.on('typing', (data) => {
-        if (data.userId !== socket.id) {
-          setTypingUser(`User ${data.userId.slice(-4)}`);
         }
-      });
+      ]);
+    };
 
-      socket.on('stopTyping', () => {
-        setTypingUser('');
-      });
-    }
+    const handleUserLeft = (data) => {
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now() + Math.random(),
+          userId: 'system',
+          username: 'System',
+          text: data.message || `${data.username} left the room`,
+          time: new Date().toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit'
+          }),
+          isSystem: true
+        }
+      ]);
+    };
+
+    const handleTyping = (data) => {
+      if (data.userId !== socket.id) {
+        setTypingUser(data.username || `User ${data.userId.slice(-4)}`);
+      }
+    };
+
+    const handleStopTyping = () => {
+      setTypingUser('');
+    };
+
+    const handleRoomUsers = (users) => {
+      setOnlineUsers(users);
+    };
+
+    socket.on('privateMessage', handlePrivateMessage);
+    socket.on('privateFileUploaded', handlePrivateFile);
+    socket.on('userJoinedPrivate', handleUserJoined);
+    socket.on('userLeftPrivate', handleUserLeft);
+    socket.on('privateTyping', handleTyping);
+    socket.on('privateStopTyping', handleStopTyping);
+    socket.on('privateRoomUsers', handleRoomUsers);
 
     return () => {
-      socket.off('privateMessage');
-      socket.off('file_uploaded');
-      socket.off('userJoined');
-      socket.off('userLeft');
-      socket.off('typing');
-      socket.off('stopTyping');
+      socket.off('privateMessage', handlePrivateMessage);
+      socket.off('privateFileUploaded', handlePrivateFile);
+      socket.off('userJoinedPrivate', handleUserJoined);
+      socket.off('userLeftPrivate', handleUserLeft);
+      socket.off('privateTyping', handleTyping);
+      socket.off('privateStopTyping', handleStopTyping);
+      socket.off('privateRoomUsers', handleRoomUsers);
     };
   }, [verified]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  }, [messages, typingUser]);
 
   const handleVerify = async () => {
     if (!passcodeInput.trim()) {
@@ -129,49 +137,58 @@ function PrivateChatRoom() {
     }
 
     setVerifying(true);
-    
-    socket.emit('joinPrivateRoom', { roomId, passcode: passcodeInput }, (response) => {
-      setVerifying(false);
-      if (response.success) {
-        setVerified(true);
-        socket.emit('userJoined', { roomId, userId: socket.id });
-      } else {
-        alert(response.message || 'Invalid passcode. Please try again.');
+
+    socket.emit(
+      'joinPrivateRoom',
+      {
+        roomId,
+        passcode: passcodeInput,
+        username: initialUsername
+      },
+      (response) => {
+        setVerifying(false);
+        if (response.success) {
+          setVerified(true);
+        } else {
+          alert(response.message || 'Invalid passcode. Please try again.');
+        }
       }
-    });
+    );
   };
 
   const sendMessage = () => {
-    if (message.trim()) {
-      socket.emit('privateMessage', { roomId, message });
-      setMessage('');
-      socket.emit('stopTyping', { roomId });
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (!message.trim()) return;
+
+    socket.emit('privateMessage', {
+      roomId,
+      message,
+      username: initialUsername
+    });
+
+    setMessage('');
+    socket.emit('privateStopTyping', { roomId });
+    clearTimeout(typingTimeoutRef.current);
   };
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // File size validation (10MB limit)
     if (file.size > 10 * 1024 * 1024) {
       alert('File size too large. Please select a file smaller than 10MB.');
       return;
     }
 
     setIsUploading(true);
-    
+
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('username', socket.id);
+    formData.append('username', initialUsername);
     formData.append('room', roomId);
 
     try {
       const response = await fetch(
-        window.location.hostname === "localhost" 
-          ? "http://localhost:5001/upload" 
-          : `http://${window.location.hostname}:5001/upload`,
+        `${SOCKET_SERVER_URL}/upload`,
         {
           method: 'POST',
           body: formData,
@@ -183,16 +200,16 @@ function PrivateChatRoom() {
       }
 
       const data = await response.json();
-      
-      // Emit file upload event to socket
-      socket.emit('file_upload', {
-        filename: data.filename,
-        originalName: file.name,
-        fileType: file.type,
-        fileSize: file.size,
-        fileUrl: data.fileUrl,
-        username: socket.id,
-        roomId: roomId
+
+      socket.emit('privateFileUpload', {
+        roomId,
+        fileInfo: {
+          filename: data.filename,
+          originalName: file.name,
+          fileType: file.type,
+          fileSize: file.size,
+          fileUrl: data.fileUrl,
+        }
       });
 
     } catch (error) {
@@ -200,7 +217,6 @@ function PrivateChatRoom() {
       alert('File upload failed. Please try again.');
     } finally {
       setIsUploading(false);
-      // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -227,10 +243,11 @@ function PrivateChatRoom() {
   };
 
   const handleTyping = () => {
-    socket.emit('typing', { roomId, userId: socket.id });
+    socket.emit('privateTyping', { roomId });
+
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      socket.emit('stopTyping', { roomId });
+      socket.emit('privateStopTyping', { roomId });
     }, 2000);
   };
 
@@ -242,7 +259,7 @@ function PrivateChatRoom() {
   };
 
   const leaveRoom = () => {
-    socket.emit('userLeft', { roomId, userId: socket.id });
+    socket.emit('leavePrivateRoom', { roomId });
     navigate('/private/create');
   };
 
@@ -283,7 +300,7 @@ function PrivateChatRoom() {
               <div className="input-icon">🔑</div>
             </div>
 
-            <button 
+            <button
               onClick={handleVerify}
               disabled={verifying}
               className={`verify-button ${verifying ? 'verifying' : ''}`}
@@ -351,19 +368,19 @@ function PrivateChatRoom() {
             <div className="online-users-sidebar">
               <h3>Online Users ({onlineUsers.length})</h3>
               <div className="users-list">
-                {onlineUsers.map(userId => (
-                  <div key={userId} className="user-item">
+                {onlineUsers.map(user => (
+                  <div key={user.id} className="user-item">
                     <div className="user-avatar">
-                      {userId === socket.id ? '👤' : '👥'}
+                      {user.id === socket.id ? '👤' : '👥'}
                     </div>
                     <span className="user-name">
-                      {userId === socket.id ? 'You' : `User ${userId.slice(-4)}`}
+                      {user.id === socket.id ? 'You' : user.username}
                     </span>
                     <div className="user-status"></div>
                   </div>
                 ))}
               </div>
-              
+
               <div className="security-badge">
                 <span className="badge-icon">🛡️</span>
                 <span className="badge-text">Secure Room</span>
@@ -381,8 +398,8 @@ function PrivateChatRoom() {
             <div className="chat-area">
               <div className="messages-container">
                 {messages.map((msg) => (
-                  <div 
-                    key={msg.id} 
+                  <div
+                    key={msg.id}
                     className={`message-bubble ${msg.isOwn ? 'own-message' : ''} ${msg.isSystem ? 'system-message' : ''} ${msg.isFile ? 'file-message' : ''}`}
                   >
                     {!msg.isSystem && !msg.isOwn && (
@@ -394,7 +411,7 @@ function PrivateChatRoom() {
                       {!msg.isSystem && !msg.isOwn && (
                         <div className="message-sender">{msg.username}</div>
                       )}
-                      
+
                       {msg.isFile ? (
                         <div className="file-message-content">
                           <div className="file-info">
@@ -406,9 +423,9 @@ function PrivateChatRoom() {
                               <div className="file-size">{formatFileSize(msg.file.fileSize)}</div>
                             </div>
                           </div>
-                          <a 
-                            href={msg.file.fileUrl} 
-                            target="_blank" 
+                          <a
+                            href={msg.file.fileUrl}
+                            target="_blank"
                             rel="noopener noreferrer"
                             className="download-button"
                           >
@@ -418,12 +435,12 @@ function PrivateChatRoom() {
                       ) : (
                         <div className="message-text">{msg.text}</div>
                       )}
-                      
+
                       <div className="message-time">{msg.time}</div>
                     </div>
                   </div>
                 ))}
-                
+
                 {typingUser && (
                   <div className="typing-indicator">
                     <div className="typing-avatar">
@@ -439,7 +456,7 @@ function PrivateChatRoom() {
                     </div>
                   </div>
                 )}
-                
+
                 <div ref={messagesEndRef} />
               </div>
 
@@ -453,8 +470,8 @@ function PrivateChatRoom() {
                     style={{ display: 'none' }}
                     id="file-input"
                   />
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     className="file-upload-button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
@@ -462,7 +479,7 @@ function PrivateChatRoom() {
                   >
                     {isUploading ? '📤' : '📎'}
                   </button>
-                  
+
                   <input
                     type="text"
                     value={message}
@@ -474,7 +491,7 @@ function PrivateChatRoom() {
                     placeholder="Type your secure message..."
                     className="message-input"
                   />
-                  <button 
+                  <button
                     onClick={sendMessage}
                     disabled={!message.trim()}
                     className="send-button"
@@ -484,7 +501,7 @@ function PrivateChatRoom() {
                 </div>
                 <div className="encryption-notice">
                   <span className="lock-icon-small">🔒</span>
-                  Messages and files are end-to-end encrypted
+                  Messages and files are securely transmitted
                 </div>
               </div>
             </div>

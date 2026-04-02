@@ -6,7 +6,7 @@ import About from './components/About.js';
 import AssistantPage from './components/AssistantPage.js';
 import PrivateChatCreate from './pages/PrivateChatCreate.js';
 import PrivateChatRoom from './pages/PrivateChatRoom.js';
-import DailyQuote from './pages/DailyQuote.js'; 
+import DailyQuote from './pages/DailyQuote.js';
 import TypingRace from './pages/TypingRace.js';
 import VideoCall from './pages/VideoCall.js';
 import MeetingCreate from "./pages/MeetingCreate.js";
@@ -18,15 +18,7 @@ const SOCKET_SERVER_URL =
   process.env.REACT_APP_SOCKET_SERVER_URL ||
   (window.location.hostname === "localhost"
     ? "http://localhost:5001"
-    : "https://chatter-link-real-time-chat-applica-five.vercel.app");
-
-// ✅ Always use deployed backend
-// const SOCKET_SERVER_URL =
-//   process.env.REACT_APP_SOCKET_SERVER_URL || "https://chatter-link-real-time-chat-applica-five.vercel.app";
-
-// console.log("🌐 SOCKET_SERVER_URL:", SOCKET_SERVER_URL);
-
-
+    : "https://YOUR-BACKEND-URL.onrender.com");
 
 // Enhanced Header Component
 const Header = () => (
@@ -71,7 +63,7 @@ const Footer = () => (
 // Enhanced Home Component
 const Home = () => {
   const navigate = useNavigate();
-  
+
   const features = [
     {
       icon: "🤖",
@@ -123,11 +115,11 @@ const Home = () => {
         <div className="hero-content">
           <h2 className="hero-title">Welcome to ChatterLink</h2>
           <p className="hero-description">
-            Experience the future of real-time communication. Connect with friends, 
+            Experience the future of real-time communication. Connect with friends,
             collaborate with teams, and enjoy seamless chatting with advanced features.
           </p>
-          <button 
-            onClick={() => navigate('/login')} 
+          <button
+            onClick={() => navigate('/login')}
             className="cta-button primary"
           >
             🚀 Get Started
@@ -144,7 +136,7 @@ const Home = () => {
         <h3 className="section-title">Explore Amazing Features</h3>
         <div className="features-grid">
           {features.map((feature, index) => (
-            <div 
+            <div
               key={index}
               className="feature-card"
               onClick={() => navigate(feature.path)}
@@ -244,20 +236,14 @@ const ChatRoom = () => {
   useEffect(() => {
     if (!name) return;
 
-    // ✅ Connect socket
     socketRef.current = io(SOCKET_SERVER_URL, {
       transports: ['websocket', 'polling'],
       withCredentials: true,
     });
 
     socketRef.current.on("connect", () => {
-      console.log("✅ Socket connected:", socketRef.current.id);
       socketRef.current.emit("join", { username: name, room: "default" });
       socketRef.current.emit("request-online-list");
-    });
-
-    socketRef.current.on("connect_error", (err) => {
-      console.error("❌ Socket connection error:", err.message);
     });
 
     socketRef.current.on("message", (data) => {
@@ -316,14 +302,13 @@ const ChatRoom = () => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // File size validation (10MB limit)
     if (file.size > 10 * 1024 * 1024) {
       alert('File size too large. Please select a file smaller than 10MB.');
       return;
     }
 
     setIsUploading(true);
-    
+
     const formData = new FormData();
     formData.append('file', file);
     formData.append('username', name);
@@ -340,7 +325,7 @@ const ChatRoom = () => {
       }
 
       const data = await response.json();
-      
+
       if (socketRef.current) {
         socketRef.current.emit('file_upload', {
           filename: data.filename,
@@ -412,7 +397,6 @@ const ChatRoom = () => {
       </div>
 
       <div className="chatroom-layout">
-        {/* Online Users Sidebar */}
         <div className="online-users-sidebar">
           <h3>Online Users ({onlineUsers.length})</h3>
           <div className="users-list">
@@ -428,12 +412,11 @@ const ChatRoom = () => {
           </div>
         </div>
 
-        {/* Main Chat Area */}
         <div className="chat-area">
           <div className="messages-container">
             {messages.map((msg, index) => (
-              <div 
-                key={msg._id || index} 
+              <div
+                key={msg._id || index}
                 className={`message-bubble ${msg.user === name ? 'own-message' : ''} ${msg.file ? 'file-message' : ''}`}
               >
                 {msg.user !== name && (
@@ -445,7 +428,7 @@ const ChatRoom = () => {
                   {msg.user !== name && (
                     <div className="message-sender">{msg.user}</div>
                   )}
-                  
+
                   {msg.file ? (
                     <div className="file-message-content">
                       <div className="file-info">
@@ -457,9 +440,9 @@ const ChatRoom = () => {
                           <div className="file-size">{formatFileSize(msg.file.fileSize)}</div>
                         </div>
                       </div>
-                      <a 
-                        href={msg.file.fileUrl} 
-                        target="_blank" 
+                      <a
+                        href={msg.file.fileUrl}
+                        target="_blank"
                         rel="noopener noreferrer"
                         className="download-button"
                       >
@@ -469,14 +452,14 @@ const ChatRoom = () => {
                   ) : (
                     <div className="message-text">{msg.text}</div>
                   )}
-                  
+
                   <div className="message-time">
                     {msg.time || formatTime(Date.now())}
                   </div>
                 </div>
               </div>
             ))}
-            
+
             {typingUser && typingUser !== name && (
               <div className="typing-indicator">
                 <div className="typing-avatar">
@@ -492,7 +475,7 @@ const ChatRoom = () => {
                 </div>
               </div>
             )}
-            
+
             <div ref={messagesEndRef} />
           </div>
 
@@ -506,15 +489,15 @@ const ChatRoom = () => {
                 style={{ display: 'none' }}
                 id="file-input"
               />
-              <button 
-                type="button" 
+              <button
+                type="button"
                 className="file-upload-button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
               >
                 {isUploading ? '📤' : '📎'}
               </button>
-              
+
               <input
                 type="text"
                 placeholder="Type your message..."
@@ -538,7 +521,6 @@ const ChatRoom = () => {
   );
 };
 
-// Main App Component
 function App() {
   return (
     <div className="app">
@@ -564,7 +546,6 @@ function App() {
   );
 }
 
-// Export the main App wrapped with Router
 export default function AppWrapper() {
   return (
     <Router>

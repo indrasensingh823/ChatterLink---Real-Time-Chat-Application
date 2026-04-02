@@ -929,63 +929,65 @@ io.on("connection", (socket) => {
 
   // ========== PRIVATE ROOMS ==========
 
-  socket.on("createPrivateRoom", ({ roomId, passcode, username }) => {
-    privateRooms[roomId] = { 
-      passcode, 
-      users: [socket.id],
-      createdBy: socket.id,
-      createdAt: new Date()
-    };
-    
+socket.on("createPrivateRoom", ({ roomId, passcode, username }) => {
+  const safeUsername = username || `User${socket.id.slice(-4)}`;
+
+  privateRooms[roomId] = {
+    passcode,
+    users: [socket.id],
+    createdBy: socket.id,
+    createdAt: new Date()
+  };
+
+  users[socket.id] = safeUsername;
+  socket.join(roomId);
+  socket.data.currentRoom = roomId;
+
+  console.log(`🔒 Private room created: ${roomId} by ${safeUsername}`);
+
+  socket.emit("privateRoomCreated", {
+    success: true,
+    roomId,
+    message: "Private room created successfully!"
+  });
+});
+
+  socket.on("joinPrivateRoom", ({ roomId, passcode, username }, callback) => {
+  if (!privateRooms[roomId]) {
+    callback({ success: false, message: "Room does not exist" });
+    return;
+  }
+
+  if (privateRooms[roomId].passcode === passcode) {
     users[socket.id] = username;
+    privateRooms[roomId].users.push(socket.id);
     socket.join(roomId);
     socket.data.currentRoom = roomId;
     
-    console.log(`🔒 Private room created: ${roomId} by ${username}`);
-    
-    socket.emit("privateRoomCreated", { 
-      success: true, 
-      roomId,
-      message: "Private room created successfully!"
+    io.to(roomId).emit("userJoinedPrivate", {
+      userId: socket.id,
+      username: username,
+      message: `${username} joined the room`,
+      time: new Date().toISOString()
     });
-  });
-
-  socket.on("joinPrivateRoom", ({ roomId, passcode, username }, callback) => {
-    if (!privateRooms[roomId]) {
-      callback({ success: false, message: "Room does not exist" });
-      return;
-    }
-
-    if (privateRooms[roomId].passcode === passcode) {
-      users[socket.id] = username;
-      privateRooms[roomId].users.push(socket.id);
-      socket.join(roomId);
-      socket.data.currentRoom = roomId;
-      
-      io.to(roomId).emit("userJoinedPrivate", {
-        userId: socket.id,
-        username: username,
-        message: `${username} joined the room`,
-        time: new Date().toISOString()
-      });
-      
-      const roomUsers = privateRooms[roomId].users.map(id => ({
-        id,
-        username: users[id] || `User${id.slice(-4)}`
-      }));
-      
-      // Send current room users to the new joiner
-      socket.emit("privateRoomUsers", roomUsers);
-      
-      // Notify others about the updated user list
-      socket.to(roomId).emit("privateRoomUsers", roomUsers);
-      
-      callback({ success: true });
-      console.log(`✅ ${username} joined private room: ${roomId}`);
-    } else {
-      callback({ success: false, message: "Invalid passcode" });
-    }
-  });
+    
+    const roomUsers = privateRooms[roomId].users.map(id => ({
+      id,
+      username: users[id] || `User${id.slice(-4)}`
+    }));
+    
+    // Send current room users to the new joiner
+    socket.emit("privateRoomUsers", roomUsers);
+    
+    // Notify others about the updated user list
+    socket.to(roomId).emit("privateRoomUsers", roomUsers);
+    
+    callback({ success: true });
+    console.log(`✅ ${username} joined private room: ${roomId}`);
+  } else {
+    callback({ success: false, message: "Invalid passcode" });
+  }
+});
 
   // Private room messaging
   socket.on("privateMessage", ({ roomId, message, username }) => {

@@ -1,17 +1,13 @@
 // src/pages/TypingRace.js
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import '../styles/TypingRace.css'; // We'll create this CSS file
-
-// Create socket connection
-// const SOCKET_SERVER_URL = window.location.hostname === "localhost"
-//   ? "http://localhost:5001"
-//   : `http://${window.location.hostname}:5001`;
+import '../styles/TypingRace.css';
 
 const SOCKET_SERVER_URL =
-  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
-
-const socket = io(SOCKET_SERVER_URL);
+  process.env.REACT_APP_SOCKET_SERVER_URL ||
+  (window.location.hostname === "localhost"
+    ? "http://localhost:5001"
+    : "https://YOUR-BACKEND-URL.onrender.com");
 
 function TypingRace() {
   const [username, setUsername] = useState('');
@@ -24,47 +20,64 @@ function TypingRace() {
   const [gameStarted, setGameStarted] = useState(false);
   const [currentWPM, setCurrentWPM] = useState(0);
   const [currentAccuracy, setCurrentAccuracy] = useState(0);
+
   const inputRef = useRef();
   const startTime = useRef(null);
+  const socketRef = useRef(null);
 
   useEffect(() => {
-    socket.on('paragraph', (newParagraph) => {
+    socketRef.current = io(SOCKET_SERVER_URL, {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+    });
+
+    socketRef.current.on('paragraph', (newParagraph) => {
       setParagraph(newParagraph);
+      setTypedText('');
+      setWinner('');
+      setCurrentWPM(0);
+      setCurrentAccuracy(0);
+      startTime.current = null;
       startCountdown();
     });
-    
-    socket.on('updatePlayers', (playersData) => {
-      setPlayers(playersData);
+
+    socketRef.current.on('updatePlayers', (playersData) => {
+      setPlayers(playersData || {});
     });
-    
-    socket.on('winner', (name) => {
+
+    socketRef.current.on('winner', (name) => {
       setWinner(name);
       setGameStarted(false);
     });
 
     return () => {
-      socket.off('paragraph');
-      socket.off('updatePlayers');
-      socket.off('winner');
+      if (socketRef.current) {
+        socketRef.current.off('paragraph');
+        socketRef.current.off('updatePlayers');
+        socketRef.current.off('winner');
+        socketRef.current.disconnect();
+      }
     };
   }, []);
 
   const startCountdown = () => {
     setCountdown(3);
+    let current = 3;
+
     const countdownInterval = setInterval(() => {
-      setCountdown(prev => {
-        if (prev === 1) {
-          clearInterval(countdownInterval);
-          setGameStarted(true);
-          setTimeout(() => {
-            if (inputRef.current) {
-              inputRef.current.focus();
-            }
-          }, 100);
-          return null;
-        }
-        return prev - 1;
-      });
+      current -= 1;
+
+      if (current > 0) {
+        setCountdown(current);
+      } else {
+        clearInterval(countdownInterval);
+        setCountdown(null);
+        setGameStarted(true);
+
+        setTimeout(() => {
+          if (inputRef.current) inputRef.current.focus();
+        }, 100);
+      }
     }, 1000);
   };
 
@@ -76,7 +89,7 @@ function TypingRace() {
   };
 
   const calculateAccuracy = (typed, original) => {
-    if (!typed) return 100;
+    if (!typed || !original) return 100;
     let correct = 0;
     const minLength = Math.min(typed.length, original.length);
     for (let i = 0; i < minLength; i++) {
@@ -87,26 +100,31 @@ function TypingRace() {
 
   const handleInputChange = (e) => {
     const value = e.target.value;
-    
+
     if (!startTime.current && value.length === 1) {
       startTime.current = Date.now();
     }
-    
+
     setTypedText(value);
 
-    const progress = Math.min((value.length / paragraph.length) * 100, 100);
+    const progress = paragraph.length
+      ? Math.min((value.length / paragraph.length) * 100, 100)
+      : 0;
+
     const wpm = calculateWPM(value);
     const accuracy = calculateAccuracy(value, paragraph);
 
     setCurrentWPM(wpm);
     setCurrentAccuracy(accuracy);
 
-    socket.emit('progressUpdate', { progress, wpm, accuracy });
+    if (socketRef.current) {
+      socketRef.current.emit('progressUpdate', { progress, wpm, accuracy });
+    }
   };
 
   const joinRace = () => {
-    if (username.trim()) {
-      socket.emit('joinRace', { username });
+    if (username.trim() && socketRef.current) {
+      socketRef.current.emit('joinRace', { username });
       setJoined(true);
     }
   };
@@ -119,9 +137,10 @@ function TypingRace() {
     startTime.current = null;
     setCurrentWPM(0);
     setCurrentAccuracy(0);
-    
-    // Rejoin the race
-    socket.emit('joinRace', { username });
+
+    if (socketRef.current) {
+      socketRef.current.emit('joinRace', { username });
+    }
   };
 
   const getPlayerList = () => {
@@ -144,7 +163,7 @@ function TypingRace() {
               <h1>Typing Race</h1>
               <p>Test your typing speed against players worldwide!</p>
             </div>
-            
+
             <div className="features-grid">
               <div className="feature">
                 <span className="feature-icon">⚡</span>
@@ -165,16 +184,16 @@ function TypingRace() {
 
             <div className="join-form">
               <div className="input-group">
-                <input 
-                  value={username} 
-                  onChange={e => setUsername(e.target.value)} 
-                  placeholder="Enter your racing name" 
+                <input
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  placeholder="Enter your racing name"
                   className="username-input"
                   onKeyDown={(e) => e.key === 'Enter' && joinRace()}
                 />
                 <div className="input-icon">👤</div>
               </div>
-              <button 
+              <button
                 onClick={joinRace}
                 disabled={!username.trim()}
                 className="join-button"
@@ -208,20 +227,16 @@ function TypingRace() {
           <div className="race-content">
             {countdown !== null && (
               <div className="countdown-overlay">
-                <div className="countdown">
-                  {countdown > 0 ? countdown : 'GO!'}
-                </div>
+                <div className="countdown">{countdown}</div>
               </div>
             )}
 
             <div className="text-display">
               <div className="text-container">
                 {paragraph.split('').map((char, index) => (
-                  <span 
-                    key={index} 
-                    className={`character ${getCharacterClass(index)} ${
-                      index === typedText.length ? 'current' : ''
-                    }`}
+                  <span
+                    key={index}
+                    className={`character ${getCharacterClass(index)} ${index === typedText.length ? 'current' : ''}`}
                   >
                     {char}
                   </span>
@@ -244,7 +259,7 @@ function TypingRace() {
                 <div className="stat">
                   <span className="stat-label">Progress</span>
                   <span className="stat-value">
-                    {Math.min(Math.round((typedText.length / paragraph.length) * 100), 100)}%
+                    {paragraph.length ? Math.min(Math.round((typedText.length / paragraph.length) * 100), 100) : 0}%
                   </span>
                 </div>
                 <div className="stat">
@@ -287,8 +302,8 @@ function TypingRace() {
                     </div>
                     <div className="player-progress">
                       <div className="progress-bar">
-                        <div 
-                          className="progress-fill" 
+                        <div
+                          className="progress-fill"
                           style={{ width: `${player.progress}%` }}
                         ></div>
                       </div>

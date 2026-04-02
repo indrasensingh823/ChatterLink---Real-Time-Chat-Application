@@ -1,13 +1,13 @@
+// src/pages/VideoCall.js
 import React, { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
 import "../styles/VideoCall.css";
 
-// const SOCKET_SERVER = window.location.hostname === "localhost"
-//   ? "http://localhost:5001"
-//   : `http://${window.location.hostname}:5001`;
-
 const SOCKET_SERVER_URL =
-  process.env.REACT_APP_SOCKET_SERVER_URL || "http://localhost:5001";
+  process.env.REACT_APP_SOCKET_SERVER_URL ||
+  (window.location.hostname === "localhost"
+    ? "http://localhost:5001"
+    : "https://YOUR-BACKEND-URL.onrender.com");
 
 const STUN_SERVERS = {
   iceServers: [
@@ -34,21 +34,29 @@ export default function VideoCall() {
   const remoteVideoRef = useRef();
 
   useEffect(() => {
-    socketRef.current = io(SOCKET_SERVER, { transports: ["websocket"] });
+    socketRef.current = io(SOCKET_SERVER_URL, {
+      transports: ["websocket", "polling"],
+      withCredentials: true,
+    });
 
     socketRef.current.on("connect", () => {
       setSocketConnected(true);
       setMeId(socketRef.current.id);
       setCallStatus("Connected to server");
+      socketRef.current.emit("request-online-list");
     });
 
-    socketRef.current.on("onlineUsersList", (list) => setOnlineUsers(list));
+    socketRef.current.on("disconnect", () => {
+      setSocketConnected(false);
+      setCallStatus("Disconnected from server");
+    });
 
-    // Incoming offer
+    socketRef.current.on("onlineUsersList", (list) => setOnlineUsers(list || []));
+
     socketRef.current.on("call-offer", async ({ from, offer }) => {
       setCallStatus("Incoming call...");
       await ensureLocalStream();
-      await createPeerConnection(from, false);
+      await createPeerConnection(from);
 
       if (!pcRef.current.currentRemoteDescription) {
         await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
@@ -61,38 +69,35 @@ export default function VideoCall() {
       }
     });
 
-    // Incoming answer
     socketRef.current.on("call-answer", async ({ answer }) => {
-      if (!pcRef.current.currentRemoteDescription) {
+      if (pcRef.current && !pcRef.current.currentRemoteDescription) {
         await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
         setInCall(true);
         setCallStatus("Call connected");
       }
     });
 
-    // ICE candidates
     socketRef.current.on("ice-candidate", ({ candidate }) => {
       if (pcRef.current && candidate) {
         pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.warn);
       }
     });
 
-    // Random match found
     socketRef.current.on("random-match-found", ({ otherId }) => {
       setIsFindingMatch(false);
       startCallTo(otherId);
     });
 
-    // Call ended
-    socketRef.current.on("call-ended", endCurrentCallCleanup);
-
-    socketRef.current.emit("request-online-list");
+    socketRef.current.on("call-ended", () => {
+      setCallStatus("Call ended");
+      endCurrentCallCleanup();
+    });
 
     return () => {
       if (socketRef.current) socketRef.current.disconnect();
       stopLocalStream();
+      if (pcRef.current) pcRef.current.close();
     };
-    // eslint-disable-next-line
   }, []);
 
   async function ensureLocalStream() {
@@ -114,29 +119,36 @@ export default function VideoCall() {
     }
   }
 
-  async function createPeerConnection(peerId, isInitiator = true) {
-    // Close previous if exists
+  async function createPeerConnection(peerId) {
     if (pcRef.current) pcRef.current.close();
 
     pcRef.current = new RTCPeerConnection(STUN_SERVERS);
 
     if (!localStreamRef.current) await ensureLocalStream();
-    localStreamRef.current.getTracks().forEach((track) => pcRef.current.addTrack(track, localStreamRef.current));
+    if (!localStreamRef.current) return;
+
+    localStreamRef.current.getTracks().forEach((track) => {
+      pcRef.current.addTrack(track, localStreamRef.current);
+    });
 
     remoteStreamRef.current = new MediaStream();
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current;
 
     pcRef.current.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((t) => remoteStreamRef.current.addTrack(t));
+      event.streams[0].getTracks().forEach((t) => {
+        remoteStreamRef.current.addTrack(t);
+      });
     };
 
     pcRef.current.onicecandidate = ({ candidate }) => {
-      if (candidate) socketRef.current.emit("ice-candidate", { to: peerId, candidate });
+      if (candidate && socketRef.current) {
+        socketRef.current.emit("ice-candidate", { to: peerId, candidate });
+      }
     };
 
     pcRef.current.onconnectionstatechange = () => {
       if (!pcRef.current) return;
-      if (["disconnected", "failed"].includes(pcRef.current.connectionState)) {
+      if (["disconnected", "failed", "closed"].includes(pcRef.current.connectionState)) {
         setCallStatus("Call disconnected");
         endCurrentCallCleanup();
       }
@@ -149,7 +161,9 @@ export default function VideoCall() {
     if (!socketRef.current || inCall) return;
     setCallStatus("Calling...");
     await ensureLocalStream();
-    await createPeerConnection(targetId, true);
+    await createPeerConnection(targetId);
+
+    if (!pcRef.current) return;
 
     const offer = await pcRef.current.createOffer();
     await pcRef.current.setLocalDescription(offer);
@@ -169,7 +183,9 @@ export default function VideoCall() {
   }
 
   function endCall() {
-    if (pairedWith && socketRef.current) socketRef.current.emit("end-call", { to: pairedWith });
+    if (pairedWith && socketRef.current) {
+      socketRef.current.emit("end-call", { to: pairedWith });
+    }
     setCallStatus("Call ended");
     endCurrentCallCleanup();
   }
@@ -196,13 +212,15 @@ export default function VideoCall() {
       setIsFindingMatch(true);
       setCallStatus("Finding random match...");
       socketRef.current.emit("random-match-request");
-      
-      // Timeout after 30 seconds
+
       setTimeout(() => {
-        if (isFindingMatch && !inCall) {
-          setIsFindingMatch(false);
-          setCallStatus("No match found. Try again.");
-        }
+        setIsFindingMatch((prev) => {
+          if (prev && !inCall) {
+            setCallStatus("No match found. Try again.");
+            return false;
+          }
+          return prev;
+        });
       }, 30000);
     }
   }
@@ -224,8 +242,8 @@ export default function VideoCall() {
         </div>
         <div className="user-actions">
           {!isMe && (
-            <button 
-              className="call-user-btn" 
+            <button
+              className="call-user-btn"
               onClick={() => handleCallUser(u.id)}
               disabled={inCall}
             >
@@ -261,11 +279,11 @@ export default function VideoCall() {
         <div className="video-section">
           <div className="video-container">
             <div className="video-wrapper local-video">
-              <video 
-                ref={localVideoRef} 
-                autoPlay 
-                muted 
-                playsInline 
+              <video
+                ref={localVideoRef}
+                autoPlay
+                muted
+                playsInline
                 className={`video-element ${!isCamOn ? 'video-disabled' : ''}`}
               />
               <div className="video-overlay">
@@ -281,10 +299,10 @@ export default function VideoCall() {
             </div>
 
             <div className="video-wrapper remote-video">
-              <video 
-                ref={remoteVideoRef} 
-                autoPlay 
-                playsInline 
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
                 className="video-element"
               />
               <div className="video-overlay">
@@ -304,7 +322,7 @@ export default function VideoCall() {
 
           <div className="controls-section">
             <div className="control-buttons">
-              <button 
+              <button
                 onClick={handleToggleCam}
                 className={`control-btn ${isCamOn ? 'active' : 'inactive'}`}
               >
@@ -314,18 +332,16 @@ export default function VideoCall() {
                 {isCamOn ? 'Camera On' : 'Camera Off'}
               </button>
 
-              <button 
+              <button
                 onClick={handleToggleMic}
                 className={`control-btn ${isMicOn ? 'active' : 'inactive'}`}
               >
-                <span className="btn-icon">
-                  {isMicOn ? '🎤' : '🎤'}
-                </span>
+                <span className="btn-icon">🎤</span>
                 {isMicOn ? 'Mic On' : 'Mic Off'}
               </button>
 
               {!inCall ? (
-                <button 
+                <button
                   onClick={handleRandomMatch}
                   className="control-btn primary match-btn"
                   disabled={isFindingMatch}
@@ -336,7 +352,7 @@ export default function VideoCall() {
                   {isFindingMatch ? 'Finding Match...' : 'Random Match'}
                 </button>
               ) : (
-                <button 
+                <button
                   onClick={endCall}
                   className="control-btn danger end-call-btn"
                 >
