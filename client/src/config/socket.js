@@ -5,6 +5,7 @@ const SOCKET_SERVER_URL =
 
 const socket = io(SOCKET_SERVER_URL, {
   transports: ["websocket", "polling"],
+  autoConnect: true,
 });
 
 export default socket;
