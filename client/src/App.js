@@ -18,7 +18,7 @@ const SOCKET_SERVER_URL =
   process.env.REACT_APP_SOCKET_SERVER_URL ||
   (window.location.hostname === "localhost"
     ? "http://localhost:5001"
-    : "https://YOUR-BACKEND-URL.onrender.com");
+    : "https://chatterlink-server.onrender.com");
 
 // Enhanced Header Component
 const Header = () => (

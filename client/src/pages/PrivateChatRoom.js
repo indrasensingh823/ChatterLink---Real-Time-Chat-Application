@@ -1,7 +1,7 @@
 // PrivateChatRoom.js
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { socket } from '../socket';
+import { socket } from '../socket.js';
 import '../styles/PrivateChatRoom.css';
 
 
