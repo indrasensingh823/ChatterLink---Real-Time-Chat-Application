@@ -25,8 +25,11 @@ const Header = () => (
   <header className="app-header">
     <div className="header-content">
       <div className="logo-container">
-        <div className="logo">💬</div>
-        <h1 className="app-title">ChatterLink</h1>
+        <img src="/logo.png" alt="ChatterLink Logo" className="logo-img" />
+        <div className="brand-text">
+          <h1 className="app-title">ChatterLink</h1>
+          <p className="app-tagline">Connect • Chat • Collaborate</p>
+        </div>
       </div>
       <nav className="nav-links">
         <Link to="/" className="nav-link">Home</Link>
