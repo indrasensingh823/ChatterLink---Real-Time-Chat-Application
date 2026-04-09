@@ -18,7 +18,7 @@ router.post("/chat", async (req, res) => {
     }
 
     // ✅ Correct Gemini 2.0 Flash endpoint (as per your curl example)
-    const MODEL = "gemini-2.0-flash";
+    const MODEL = "gemini-flash-lite-latest";
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
     // ✅ Request body (same as your curl format)

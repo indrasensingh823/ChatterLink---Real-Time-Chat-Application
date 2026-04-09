@@ -97,7 +97,7 @@ const getOfflineResponse = (msg) => {
   
   // About the Assistant
   if (lower.includes("your name") || lower.includes("who are you")) 
-    return "I'm ChatterLink Assistant, your friendly AI helper powered by Google Gemini! 🤖 I'm here to help you with everything about ChatterLink app.";
+    return "I'm ChatterLink Assistant, your friendly AI helper powered by ChatterLink AI! 🤖 I'm here to help you with everything about ChatterLink app.";
   if (lower.includes("what are you") || lower.includes("what do you do"))
     return "I'm an AI assistant designed to help you with ChatterLink features, answer questions, and provide support for the app!";
   
