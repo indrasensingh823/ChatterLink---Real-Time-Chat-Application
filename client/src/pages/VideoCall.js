@@ -1,5 +1,5 @@
 // src/pages/VideoCall.js
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import io from "socket.io-client";
 import "../styles/VideoCall.css";
 
@@ -10,9 +10,7 @@ const SOCKET_SERVER_URL =
     : "https://chatterlink-server.onrender.com");
 
 const STUN_SERVERS = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-  ],
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
 export default function VideoCall() {
@@ -33,6 +31,124 @@ export default function VideoCall() {
   const localVideoRef = useRef();
   const remoteVideoRef = useRef();
 
+  const ensureLocalStream = useCallback(async () => {
+    if (localStreamRef.current) return;
+
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+
+      localStreamRef.current = s;
+
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = s;
+      }
+    } catch (err) {
+      alert("Camera / Microphone access is required.");
+      console.error(err);
+    }
+  }, []);
+
+  const stopLocalStream = useCallback(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
+  }, []);
+
+  const endCurrentCallCleanup = useCallback(() => {
+    if (pcRef.current) pcRef.current.close();
+    pcRef.current = null;
+    setPairedWith(null);
+    setInCall(false);
+    setIsFindingMatch(false);
+
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+
+    remoteStreamRef.current = null;
+  }, []);
+
+  const createPeerConnection = useCallback(
+    async (peerId) => {
+      if (pcRef.current) pcRef.current.close();
+
+      pcRef.current = new RTCPeerConnection(STUN_SERVERS);
+
+      if (!localStreamRef.current) await ensureLocalStream();
+      if (!localStreamRef.current) return;
+
+      localStreamRef.current.getTracks().forEach((track) => {
+        pcRef.current.addTrack(track, localStreamRef.current);
+      });
+
+      remoteStreamRef.current = new MediaStream();
+
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      }
+
+      pcRef.current.ontrack = (event) => {
+        event.streams[0].getTracks().forEach((t) => {
+          const alreadyExists = remoteStreamRef.current
+            ?.getTracks()
+            .some((track) => track.id === t.id);
+
+          if (!alreadyExists) {
+            remoteStreamRef.current?.addTrack(t);
+          }
+        });
+      };
+
+      pcRef.current.onicecandidate = ({ candidate }) => {
+        if (candidate && socketRef.current) {
+          socketRef.current.emit("ice-candidate", { to: peerId, candidate });
+        }
+      };
+
+      pcRef.current.onconnectionstatechange = () => {
+        if (!pcRef.current) return;
+
+        if (
+          ["disconnected", "failed", "closed"].includes(
+            pcRef.current.connectionState
+          )
+        ) {
+          setCallStatus("Call disconnected");
+          endCurrentCallCleanup();
+        }
+      };
+
+      return pcRef.current;
+    },
+    [ensureLocalStream, endCurrentCallCleanup]
+  );
+
+  const startCallTo = useCallback(
+    async (targetId) => {
+      if (!socketRef.current || inCall) return;
+
+      setCallStatus("Calling...");
+      await ensureLocalStream();
+      await createPeerConnection(targetId);
+
+      if (!pcRef.current) return;
+
+      const offer = await pcRef.current.createOffer();
+      await pcRef.current.setLocalDescription(offer);
+
+      socketRef.current.emit("call-offer", { to: targetId, offer });
+
+      setPairedWith(targetId);
+      setInCall(true);
+      setCallStatus("Call connected");
+    },
+    [inCall, ensureLocalStream, createPeerConnection]
+  );
+
   useEffect(() => {
     socketRef.current = io(SOCKET_SERVER_URL, {
       transports: ["websocket", "polling"],
@@ -51,35 +167,55 @@ export default function VideoCall() {
       setCallStatus("Disconnected from server");
     });
 
-    socketRef.current.on("onlineUsersList", (list) => setOnlineUsers(list || []));
+    socketRef.current.on("onlineUsersList", (list) => {
+      setOnlineUsers(list || []);
+    });
 
     socketRef.current.on("call-offer", async ({ from, offer }) => {
-      setCallStatus("Incoming call...");
-      await ensureLocalStream();
-      await createPeerConnection(from);
+      try {
+        setCallStatus("Incoming call...");
+        await ensureLocalStream();
+        await createPeerConnection(from);
 
-      if (!pcRef.current.currentRemoteDescription) {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pcRef.current.createAnswer();
-        await pcRef.current.setLocalDescription(answer);
-        socketRef.current.emit("call-answer", { to: from, answer });
-        setPairedWith(from);
-        setInCall(true);
-        setCallStatus("Call connected");
+        if (!pcRef.current?.currentRemoteDescription) {
+          await pcRef.current.setRemoteDescription(
+            new RTCSessionDescription(offer)
+          );
+
+          const answer = await pcRef.current.createAnswer();
+          await pcRef.current.setLocalDescription(answer);
+
+          socketRef.current.emit("call-answer", { to: from, answer });
+
+          setPairedWith(from);
+          setInCall(true);
+          setCallStatus("Call connected");
+        }
+      } catch (err) {
+        console.error("Error handling call-offer:", err);
+        setCallStatus("Failed to answer call");
       }
     });
 
     socketRef.current.on("call-answer", async ({ answer }) => {
-      if (pcRef.current && !pcRef.current.currentRemoteDescription) {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-        setInCall(true);
-        setCallStatus("Call connected");
+      try {
+        if (pcRef.current && !pcRef.current.currentRemoteDescription) {
+          await pcRef.current.setRemoteDescription(
+            new RTCSessionDescription(answer)
+          );
+          setInCall(true);
+          setCallStatus("Call connected");
+        }
+      } catch (err) {
+        console.error("Error handling call-answer:", err);
       }
     });
 
     socketRef.current.on("ice-candidate", ({ candidate }) => {
       if (pcRef.current && candidate) {
-        pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.warn);
+        pcRef.current
+          .addIceCandidate(new RTCIceCandidate(candidate))
+          .catch(console.warn);
       }
     });
 
@@ -98,89 +234,13 @@ export default function VideoCall() {
       stopLocalStream();
       if (pcRef.current) pcRef.current.close();
     };
-  }, []);
-
-  async function ensureLocalStream() {
-    if (localStreamRef.current) return;
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-      localStreamRef.current = s;
-      if (localVideoRef.current) localVideoRef.current.srcObject = s;
-    } catch (err) {
-      alert("Camera / Microphone access is required.");
-      console.error(err);
-    }
-  }
-
-  function stopLocalStream() {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => t.stop());
-      localStreamRef.current = null;
-    }
-  }
-
-  async function createPeerConnection(peerId) {
-    if (pcRef.current) pcRef.current.close();
-
-    pcRef.current = new RTCPeerConnection(STUN_SERVERS);
-
-    if (!localStreamRef.current) await ensureLocalStream();
-    if (!localStreamRef.current) return;
-
-    localStreamRef.current.getTracks().forEach((track) => {
-      pcRef.current.addTrack(track, localStreamRef.current);
-    });
-
-    remoteStreamRef.current = new MediaStream();
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current;
-
-    pcRef.current.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((t) => {
-        remoteStreamRef.current.addTrack(t);
-      });
-    };
-
-    pcRef.current.onicecandidate = ({ candidate }) => {
-      if (candidate && socketRef.current) {
-        socketRef.current.emit("ice-candidate", { to: peerId, candidate });
-      }
-    };
-
-    pcRef.current.onconnectionstatechange = () => {
-      if (!pcRef.current) return;
-      if (["disconnected", "failed", "closed"].includes(pcRef.current.connectionState)) {
-        setCallStatus("Call disconnected");
-        endCurrentCallCleanup();
-      }
-    };
-
-    return pcRef.current;
-  }
-
-  async function startCallTo(targetId) {
-    if (!socketRef.current || inCall) return;
-    setCallStatus("Calling...");
-    await ensureLocalStream();
-    await createPeerConnection(targetId);
-
-    if (!pcRef.current) return;
-
-    const offer = await pcRef.current.createOffer();
-    await pcRef.current.setLocalDescription(offer);
-    socketRef.current.emit("call-offer", { to: targetId, offer });
-    setPairedWith(targetId);
-    setInCall(true);
-    setCallStatus("Call connected");
-  }
-
-  function endCurrentCallCleanup() {
-    if (pcRef.current) pcRef.current.close();
-    pcRef.current = null;
-    setPairedWith(null);
-    setInCall(false);
-    setIsFindingMatch(false);
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-  }
+  }, [
+    createPeerConnection,
+    endCurrentCallCleanup,
+    ensureLocalStream,
+    startCallTo,
+    stopLocalStream,
+  ]);
 
   function endCall() {
     if (pairedWith && socketRef.current) {
@@ -192,13 +252,17 @@ export default function VideoCall() {
 
   function handleToggleMic() {
     if (!localStreamRef.current) return;
-    localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = !t.enabled));
+    localStreamRef.current
+      .getAudioTracks()
+      .forEach((t) => (t.enabled = !t.enabled));
     setIsMicOn((prev) => !prev);
   }
 
   function handleToggleCam() {
     if (!localStreamRef.current) return;
-    localStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = !t.enabled));
+    localStreamRef.current
+      .getVideoTracks()
+      .forEach((t) => (t.enabled = !t.enabled));
     setIsCamOn((prev) => !prev);
   }
 
@@ -227,11 +291,13 @@ export default function VideoCall() {
 
   function renderUserRow(u) {
     const isMe = u.id === meId;
+
     return (
       <div key={u.id} className={`user-row ${isMe ? "me" : ""}`}>
         <div className="user-avatar">
           {u.name?.[0]?.toUpperCase() || "?"}
         </div>
+
         <div className="user-info">
           <div className="user-name">
             {isMe ? `${u.name} (You)` : u.name || "Anonymous"}
@@ -240,6 +306,7 @@ export default function VideoCall() {
             {isMe ? "Online" : "Available"}
           </div>
         </div>
+
         <div className="user-actions">
           {!isMe && (
             <button
@@ -266,10 +333,15 @@ export default function VideoCall() {
             <p>Connect with people through real-time video calls</p>
           </div>
         </div>
+
         <div className="connection-status">
-          <div className={`status-indicator ${socketConnected ? 'connected' : 'disconnected'}`}>
+          <div
+            className={`status-indicator ${
+              socketConnected ? "connected" : "disconnected"
+            }`}
+          >
             <div className="status-dot"></div>
-            {socketConnected ? 'Connected' : 'Disconnected'}
+            {socketConnected ? "Connected" : "Disconnected"}
           </div>
           <div className="call-status">{callStatus}</div>
         </div>
@@ -284,16 +356,20 @@ export default function VideoCall() {
                 autoPlay
                 muted
                 playsInline
-                className={`video-element ${!isCamOn ? 'video-disabled' : ''}`}
+                className={`video-element ${!isCamOn ? "video-disabled" : ""}`}
               />
               <div className="video-overlay">
                 <div className="video-label">
                   <span className="label-icon">👤</span>
-                  You {!isCamOn && '(Camera Off)'}
+                  You {!isCamOn && "(Camera Off)"}
                 </div>
                 <div className="video-indicators">
-                  {!isMicOn && <div className="indicator mute-indicator">🔇 Muted</div>}
-                  {!isCamOn && <div className="indicator video-off-indicator">📷 Off</div>}
+                  {!isMicOn && (
+                    <div className="indicator mute-indicator">🔇 Muted</div>
+                  )}
+                  {!isCamOn && (
+                    <div className="indicator video-off-indicator">📷 Off</div>
+                  )}
                 </div>
               </div>
             </div>
@@ -308,7 +384,7 @@ export default function VideoCall() {
               <div className="video-overlay">
                 <div className="video-label">
                   <span className="label-icon">👥</span>
-                  {inCall ? 'Remote User' : 'Waiting for connection...'}
+                  {inCall ? "Remote User" : "Waiting for connection..."}
                 </div>
                 {!inCall && (
                   <div className="waiting-connection">
@@ -324,20 +400,18 @@ export default function VideoCall() {
             <div className="control-buttons">
               <button
                 onClick={handleToggleCam}
-                className={`control-btn ${isCamOn ? 'active' : 'inactive'}`}
+                className={`control-btn ${isCamOn ? "active" : "inactive"}`}
               >
-                <span className="btn-icon">
-                  {isCamOn ? '📹' : '📷'}
-                </span>
-                {isCamOn ? 'Camera On' : 'Camera Off'}
+                <span className="btn-icon">{isCamOn ? "📹" : "📷"}</span>
+                {isCamOn ? "Camera On" : "Camera Off"}
               </button>
 
               <button
                 onClick={handleToggleMic}
-                className={`control-btn ${isMicOn ? 'active' : 'inactive'}`}
+                className={`control-btn ${isMicOn ? "active" : "inactive"}`}
               >
                 <span className="btn-icon">🎤</span>
-                {isMicOn ? 'Mic On' : 'Mic Off'}
+                {isMicOn ? "Mic On" : "Mic Off"}
               </button>
 
               {!inCall ? (
@@ -347,9 +421,9 @@ export default function VideoCall() {
                   disabled={isFindingMatch}
                 >
                   <span className="btn-icon">
-                    {isFindingMatch ? '⏳' : '🔀'}
+                    {isFindingMatch ? "⏳" : "🔀"}
                   </span>
-                  {isFindingMatch ? 'Finding Match...' : 'Random Match'}
+                  {isFindingMatch ? "Finding Match..." : "Random Match"}
                 </button>
               ) : (
                 <button
@@ -403,19 +477,27 @@ export default function VideoCall() {
             <div className="tips-list">
               <div className="tip-item">
                 <span className="tip-icon">📱</span>
-                <div className="tip-text">Allow camera & microphone access when prompted</div>
+                <div className="tip-text">
+                  Allow camera & microphone access when prompted
+                </div>
               </div>
               <div className="tip-item">
                 <span className="tip-icon">🎧</span>
-                <div className="tip-text">Use headphones for better audio quality</div>
+                <div className="tip-text">
+                  Use headphones for better audio quality
+                </div>
               </div>
               <div className="tip-item">
                 <span className="tip-icon">🌐</span>
-                <div className="tip-text">Good internet connection required for smooth video</div>
+                <div className="tip-text">
+                  Good internet connection required for smooth video
+                </div>
               </div>
               <div className="tip-item">
                 <span className="tip-icon">⚡</span>
-                <div className="tip-text">Random match connects you with online users instantly</div>
+                <div className="tip-text">
+                  Random match connects you with online users instantly
+                </div>
               </div>
             </div>
           </div>
