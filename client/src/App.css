@@ -521,6 +521,11 @@ body, #root, .app {
   margin-bottom: 1.5rem;
 }
 
+.input-icon {
+  position: relative;
+  left: 0px;
+}
+
 .name-input, .message-input {
   width: 100%;
   padding: 1rem;
