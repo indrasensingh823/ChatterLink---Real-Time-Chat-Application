@@ -1,5 +1,6 @@
 // src/App.js
 import React, { useState, useEffect, useRef } from 'react';
+import Loader from "./components/Loader";
 import io from 'socket.io-client';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import About from './components/About.js';
@@ -524,6 +525,8 @@ const ChatRoom = () => {
   );
 };
 
+
+
 function App() {
   return (
     <div className="app">
@@ -547,9 +550,23 @@ function App() {
       <Footer />
     </div>
   );
+
+  
 }
 
 export default function AppWrapper() {
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 2500); // ⏱️ Loader time
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (loading) return <Loader />;
+
   return (
     <Router>
       <App />
