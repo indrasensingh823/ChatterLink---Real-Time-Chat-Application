@@ -56,7 +56,7 @@ const Footer = () => (
         </a>
       </div>
       <div className="footer-info">
-        <p>&copy; 2025 ChatterLink - Connect, Chat, Collaborate</p>
+        <p>&copy; 2026 ChatterLink - Connect, Chat, Collaborate</p>
         <span className="made-with-love">Made with ❤️ in India</span>
       </div>
     </div>

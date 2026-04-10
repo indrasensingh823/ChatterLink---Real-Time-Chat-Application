@@ -26,6 +26,28 @@ const PORT = process.env.PORT || 5001;
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR || path.join(process.cwd(), "recordings");
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
+
+
+// 🆕 Race paragraphs list
+const raceParagraphs = [
+  "The quick brown fox jumps over the lazy dog.",
+  "Typing fast requires a lot of consistent practice and focus.",
+  "JavaScript is a powerful language for building web applications.",
+  "Never give up because great things take time to achieve.",
+  "Practice daily to improve your typing speed and accuracy.",
+  "Coding is like poetry, every line matters.",
+  "Success comes to those who work hard and stay consistent."
+];
+
+// 🆕 Store paragraph per room
+const raceRoomParagraphs = {};
+
+// 🆕 Random generator
+function getRandomParagraph() {
+  const randomIndex = Math.floor(Math.random() * raceParagraphs.length);
+  return raceParagraphs[randomIndex];
+}
+
 // 🛠️ CRITICAL FIX: Ensure uploads directory exists with proper permissions
 try {
   [RECORDINGS_DIR, UPLOADS_DIR].forEach(dir => {
@@ -539,7 +561,7 @@ app.get("/private-rooms", (req, res) => {
 const users = {};
 let onlineUsersCount = 0;
 const racePlayers = {};
-let raceParagraph = "The quick brown fox jumps over the lazy dog.";
+// let raceParagraph = "The quick brown fox jumps over the lazy dog.";
 const privateRooms = {};
 if (!global.__onlineQueue) global.__onlineQueue = [];
 const queue = global.__onlineQueue;
@@ -906,26 +928,56 @@ io.on("connection", (socket) => {
   });
 
   // Typing Race Game
-  socket.on("joinRace", ({ username }) => {
-    racePlayers[socket.id] = { username, progress: 0, wpm: 0, accuracy: 0 };
-    socket.emit("paragraph", raceParagraph);
-    io.emit("updatePlayers", racePlayers);
-  });
+socket.on("joinRace", ({ username, room = "race-default" }) => {
+  // 🧠 Join race room
+  socket.join(room);
+  socket.data.raceRoom = room;
 
-  socket.on("progressUpdate", ({ progress, wpm, accuracy }) => {
-    if (racePlayers[socket.id]) {
-      racePlayers[socket.id] = { 
-        ...racePlayers[socket.id], 
-        progress, 
-        wpm, 
-        accuracy 
-      };
-      if (progress >= 100) {
-        io.emit("winner", racePlayers[socket.id].username);
-      }
-      io.emit("updatePlayers", racePlayers);
+  racePlayers[socket.id] = { username, progress: 0, wpm: 0, accuracy: 0 };
+
+  // 🎯 If room doesn't have paragraph, assign one
+  if (!raceRoomParagraphs[room]) {
+    raceRoomParagraphs[room] = getRandomParagraph();
+    console.log(`🆕 New paragraph generated for room ${room}`);
+  }
+
+  // 📤 Send SAME paragraph to user
+  socket.emit("paragraph", raceRoomParagraphs[room]);
+
+  // 👥 Update players only in that room
+  const roomPlayers = Object.fromEntries(
+    Object.entries(racePlayers).filter(
+      ([id]) => io.sockets.sockets.get(id)?.data?.raceRoom === room
+    )
+  );
+
+  io.to(room).emit("updatePlayers", roomPlayers);
+});
+
+socket.on("progressUpdate", ({ progress, wpm, accuracy }) => {
+  const room = socket.data.raceRoom;
+
+  if (racePlayers[socket.id] && room) {
+    racePlayers[socket.id] = { 
+      ...racePlayers[socket.id], 
+      progress, 
+      wpm, 
+      accuracy 
+    };
+
+    const roomPlayers = Object.fromEntries(
+      Object.entries(racePlayers).filter(
+        ([id]) => io.sockets.sockets.get(id)?.data?.raceRoom === room
+      )
+    );
+
+    if (progress >= 100) {
+      io.to(room).emit("winner", racePlayers[socket.id].username);
     }
-  });
+
+    io.to(room).emit("updatePlayers", roomPlayers);
+  }
+});
 
   // ========== PRIVATE ROOMS ==========
 
@@ -1107,6 +1159,20 @@ socket.on("createPrivateRoom", ({ roomId, passcode, username }) => {
   socket.on("disconnect", () => {
     onlineUsersCount--;
     emitOnlineCount();
+
+
+    const room = socket.data.raceRoom;
+if (room) {
+  const stillUsers = Object.keys(racePlayers).filter(
+    id => io.sockets.sockets.get(id)?.data?.raceRoom === room
+  );
+
+  // 🗑️ Agar room empty ho gaya → paragraph delete
+  if (stillUsers.length === 0) {
+    delete raceRoomParagraphs[room];
+    console.log(`🗑️ Deleted paragraph for empty room: ${room}`);
+  }
+}
     
     // Handle meeting room leaves
     for (const room of socket.rooms) {
