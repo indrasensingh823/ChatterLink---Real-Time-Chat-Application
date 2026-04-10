@@ -210,7 +210,7 @@ const getOfflineResponse = (msg) => {
     setMessages([
       {
         sender: "Assistant",
-        text: "Hello! I'm your AI assistant powered by Google Gemini. How can I help you today?",
+        text: "Hello! I'm your AI assistant powered by ChatterLink AI. How can I help you today?",
         ts: Date.now(),
         isSystem: true
       }
@@ -231,7 +231,7 @@ const getOfflineResponse = (msg) => {
           <div className="ai-icon">🤖</div>
           <div className="header-text">
             <h1>AI Assistant</h1>
-            <p>Powered by Google Gemini • Smart, helpful, and always available</p>
+            <p>Powered by ChatterLink AI • Smart, helpful, and always available</p>
           </div>
         </div>
         <button onClick={clearChat} className="clear-chat-btn">
